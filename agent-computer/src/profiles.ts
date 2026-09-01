@@ -50,6 +50,9 @@ export { numberFromEnv };
 /** The viewport, which is what a person's click coordinates are relative to. */
 export const VIEWPORT = { width: 1280, height: 800 };
 
+/** A headed browser is what makes the Bot's whole computer visible to a person. */
+const DESKTOP_ENABLED = process.env.COMPUTER_DESKTOP === "on";
+
 /**
  * Files Chromium uses to refuse a second instance on one profile.
  *
@@ -96,14 +99,19 @@ const LAUNCH_ARGS = [
   ...(SANDBOX_ENABLED ? [] : ["--no-sandbox"]),
   "--disable-dev-shm-usage",
   "--password-store=basic",
+  ...(DESKTOP_ENABLED
+    ? [
+        `--window-size=${VIEWPORT.width},${VIEWPORT.height}`,
+        "--window-position=0,0",
+        "--start-maximized",
+      ]
+    : []),
   // Drop the automation signals Chromium sets for itself, so a real person who takes the wheel can
   // sign in to a site that refuses obvious automation (Google among them). This is the flag, not a
   // JS patch of `navigator.webdriver`: the flag turns the property off at the source, where spoofing
   // it from a script leaves the other tells a detector cross-checks. It does not change what the Bot
-  // may do; the governed path is unchanged. The larger tell — a headless build reporting
-  // `HeadlessChrome` in its user agent — is only removed by running headed under a virtual display,
-  // which is a heavier image change tracked separately; this reduces the signals it can reduce
-  // without one.
+  // may do; the governed path is unchanged. The image runs headed on its virtual display, so the
+  // person taking over sees the same browser the Bot acts on, including its native browser chrome.
   "--disable-blink-features=AutomationControlled",
 ];
 
@@ -337,6 +345,26 @@ export function createProfiles(root: string, onClosed: BrowserClosed) {
 
   return {
     /**
+     * The Bot's page only if its browser is already running.
+     *
+     * Passive observers use this path. Looking at a computer must not start one: the transcript polls
+     * screenshots while it is open, and using `page()` there meant closing Chromium with its native
+     * X immediately launched it again. This also deliberately leaves `usedAt` alone, so a watcher
+     * does not make an otherwise idle browser immortal.
+     */
+    runningPage(botId: string): Page | null {
+      const existing = live.get(botId);
+      existing?.retarget();
+      if (
+        existing?.context.browser()?.isConnected() &&
+        !existing.page.isClosed()
+      ) {
+        return existing.page;
+      }
+      return null;
+    },
+
+    /**
      * The Bot's page, starting its browser if it is not running.
      *
      * Started on first use rather than at boot, and re-created if it died: a crashed Chromium would
@@ -381,6 +409,7 @@ export function createProfiles(root: string, onClosed: BrowserClosed) {
         const proxy = egressFor(botId, process.env);
         const context = await chromium.launchPersistentContext(dir, {
           args: LAUNCH_ARGS,
+          headless: !DESKTOP_ENABLED,
           // Playwright launches with `--enable-automation`, which sets `navigator.webdriver` and the
           // "controlled by automated software" banner. Dropped for the same reason as the flag above:
           // a person who takes the wheel should be able to sign in. Named explicitly so the sandbox
@@ -429,6 +458,26 @@ export function createProfiles(root: string, onClosed: BrowserClosed) {
         });
         page.on("close", () => record.retarget());
         live.set(botId, record);
+        // Closing Chromium with its native X button bypasses `stop` and `evict`. Without this event,
+        // the dead context remained in `live`, `/computers` reported it as running, and nothing on
+        // the desktop could open it again until a later Bot API call happened to discover the stale
+        // page. Explicit closes delete the record before closing the context, so this runs only for
+        // a native close or crash and cannot announce the same close twice.
+        context.on("close", () => {
+          if (live.get(botId)?.context !== context) return;
+          live.delete(botId);
+          console.info(
+            JSON.stringify({
+              type: "computer-browser-closed",
+              botId,
+              reason: "its browser window was closed",
+            }),
+          );
+          void settleWithin(
+            Promise.resolve(onClosed(botId)),
+            ANNOUNCE_BUDGET_MS,
+          );
+        });
         // After the new one is in the map, so the cap counts what is really running and the Bot that
         // just asked is the most recently used and therefore never the one closed.
         await enforceCap();

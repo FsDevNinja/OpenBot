@@ -8,6 +8,55 @@ Newest first. `Unreleased` is what is on `main` and not yet tagged.
 
 ## Unreleased
 
+### People and Bots can use their own avatars
+
+The signed-in person can upload, replace, or remove a PNG, JPEG, or WebP avatar from Settings. Bot
+owners can do the same from the coworker dialog, and deployment administrators can brand packaged
+Bots without gaining permission to rewrite their executable profiles. Custom images now follow the
+person or Bot through the sidebar, channel roster, recipients, handoffs, and profile surfaces, while
+removal returns to the identity-provider image, initials, or generated Bot avatar.
+
+Uploads are authenticated, limited to 2 MB and safe image dimensions, checked against their actual
+file signature, and served from short private versioned URLs rather than copied into roster JSON.
+
+### Computer use is a whole graphical computer, with a dock that survives closing the browser
+
+A Bot with an isolated computer now exposes its full Linux desktop through the guarded OpenBot
+screen: browser chrome, tabs, native dialogs, a terminal, and the desktop itself rather than only a
+CDP canvas of one page. The small dock contains exactly the applications the image provides — the
+managed Browser and a Terminal in the durable workspace. Closing Chromium with its own **X** leaves
+the desktop running, records that the browser closed, and the Browser icon opens the same Bot profile
+again instead of leaving the computer in a dead state. Non-default desktop sizes are letterboxed
+rather than stretched.
+
+The full framebuffer is offered only by a per-Bot provider. A shared computer keeps the Bot-scoped
+page stream, because its process-wide desktop could expose another Bot's window. Kubernetes
+`computers.mode: sandbox` gives each Bot its own container; `vm` requires the configured Kata runtime
+class for the VM boundary. Older computer images also fall back to the page stream during a rolling
+upgrade. The chart is now 0.2.0, and release automation keeps its default `appVersion` on the exact
+OpenBot image being published.
+
+Watching remains read-only. Taking control now returns a random, short-lived capability held only by
+that browser tab; the computer checks it again on the WebSocket and on every mouse or keyboard event.
+A second authorized viewer can watch but cannot inject input, replace the first person's takeover, or
+reuse the public “human is driving” state as permission. Closing the tab lets the lease expire and
+returns the wheel to the Bot.
+
+### A local Codex coworker keeps its conversation and uses OpenBot's governed tools
+
+OpenBot can now run a coworker through the Codex app already signed in on the host, without an API
+key. Its conversation survives adapter and app-server restarts: OpenBot records the Codex thread it
+owns, resumes that exact thread, and refuses to silently replace unreadable recovery state.
+
+Connector calls do not go around the deployment. Codex sees only the tools OpenBot assigned to that
+coworker, and every call returns with the deployment's signed run assertion through the existing
+grant, policy and audit gateway. Native Codex shell, file, web, browser, computer, app, plugin and MCP
+paths are disabled before a turn can begin, the child process receives none of OpenBot's tool,
+computer, database or provider credentials, and the remaining turn is sandboxed read-only without
+network access. A post-start interruption remains as an alarm if a disabled native path is ever
+reported. Rejected, stale and duplicate callbacks are reported as failed tool results rather than
+being carried out.
+
 ### Coworkers are made in a wizard and managed in a dialog
 
 Creating a coworker is now a three-step wizard — who it is, who may see it, then where it runs,

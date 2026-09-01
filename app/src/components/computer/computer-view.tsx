@@ -1,7 +1,15 @@
-import { useEffect, useRef, useState } from "react";
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import { createPortal } from "react-dom";
 import {
   type ControlState,
+  controlLease,
   readControl,
   releaseControl,
   supplySecret,
@@ -14,6 +22,13 @@ import {
 } from "@/lib/computers/screen";
 import { ChannelAvatar } from "../channels/avatar";
 import { LiveScreen } from "./live-screen";
+
+// RFB decoding is substantial and is needed only after somebody opens the full-size computer.
+// Keeping it out of the channel's initial bundle avoids charging every conversation for takeover.
+const RemoteDesktop = lazy(async () => {
+  const module = await import("./remote-desktop");
+  return { default: module.RemoteDesktop };
+});
 
 /** Explicit blank-browser URLs use placeholder artwork; missing URL fields are treated as real pages. */
 function isBlankBrowser(shot: Screenshot): boolean {
@@ -29,6 +44,20 @@ function hostOf(url: string): string {
   } catch {
     return url;
   }
+}
+
+/**
+ * Only an RFB/page-stream connection error may cover the expanded computer.
+ *
+ * The browser screenshot poll is a sibling surface. It is expected to fail after somebody closes
+ * Chromium from the desktop, and showing that failure over the framebuffer would hide the dock used
+ * to reopen it. Keeping both inputs here makes that separation a regression-testable decision.
+ */
+export function desktopOverlayProblem(
+  _browserProblem: string | null,
+  desktopProblem: string | null,
+): string | null {
+  return desktopProblem;
 }
 
 /**
@@ -222,16 +251,33 @@ export function ComputerView({
 }: Props) {
   const [shot, setShot] = useState<Screenshot | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
+  /** A full-desktop connection problem, separate from the browser screenshot used by the inline tile. */
+  const [desktopProblem, setDesktopProblem] = useState<string | null>(null);
   const [expanded, setExpanded] = useState(false);
+  const [desktopUnavailable, setDesktopUnavailable] = useState(false);
   const [control, setControl] = useState<ControlState | null>(null);
   /** Held only until it is sent. Never lifted into a URL, a log, or anything that outlives this form. */
   const [secret, setSecret] = useState("");
   const [secretProblem, setSecretProblem] = useState<string | null>(null);
   const [sendingSecret, setSendingSecret] = useState(false);
-  const driving = control?.holder === "human";
+  const lease = controlLease(computerId);
+  const driving = control?.holder === "human" && Boolean(lease);
+  const visibleDesktopProblem = desktopOverlayProblem(problem, desktopProblem);
   /** Read by the polling loop without restarting it on control changes. */
   const drivingRef = useRef(false);
   drivingRef.current = driving;
+
+  useEffect(() => {
+    // Referenced deliberately: a different Bot may run an older image even when this one does not.
+    void computerId;
+    setDesktopUnavailable(false);
+    setDesktopProblem(null);
+  }, [computerId]);
+
+  const markDesktopUnavailable = useCallback(() => {
+    setDesktopUnavailable(true);
+    setDesktopProblem(null);
+  }, []);
 
   /** Release control; the Bot's waiting tool call resumes from this state change. */
   const handBack = async () => {
@@ -429,7 +475,7 @@ export function ComputerView({
    * gets the live socket whatever is on it, because once a person is driving the stream is the truth
    * about the page and a placeholder over it would be the view arguing with them.
    */
-  const showLiveScreen = !settled && (showScreen || driving);
+  const showLiveScreen = !settled;
   /**
    * Whether the wheel in somebody's hands is the wheel THIS tile is showing.
    *
@@ -641,20 +687,39 @@ export function ComputerView({
                     </div>
                   ) : showLiveScreen ? (
                     <div className="relative w-full" style={{ aspectRatio }}>
-                      <LiveScreen
-                        computerId={computerId}
-                        driving={driving}
-                        onProblem={setProblem}
-                      />
+                      {desktopUnavailable ? (
+                        <LiveScreen
+                          computerId={computerId}
+                          driving={driving}
+                          lease={lease}
+                          onProblem={setDesktopProblem}
+                        />
+                      ) : (
+                        <Suspense
+                          fallback={
+                            <div className="absolute inset-0 flex items-center justify-center text-sm text-white/70">
+                              Connecting to the computer…
+                            </div>
+                          }
+                        >
+                          <RemoteDesktop
+                            computerId={computerId}
+                            driving={driving}
+                            lease={lease}
+                            onProblem={setDesktopProblem}
+                            onUnavailable={markDesktopUnavailable}
+                          />
+                        </Suspense>
+                      )}
                       {/*
-                        A live screen that ends reports why through `onProblem`, and this is the
-                        branch that is mounted when it does. Without drawing it here the message
-                        landed in `problem`, which only the sibling `NothingToSee` reads, so the
-                        screen ended with the stale last frame frozen on the canvas and nothing said.
+                        A live desktop that ends reports why through its own problem state. This must
+                        stay separate from the inline browser screenshot: a deliberately closed
+                        browser makes that poll fail while the VM display and its launchers remain
+                        healthy, and drawing that failure here covered the very dock used to reopen it.
                       */}
-                      {problem ? (
+                      {visibleDesktopProblem ? (
                         <div className="absolute inset-0 flex items-center justify-center bg-background/85 p-4 text-center text-sm text-muted-foreground">
-                          <span>{problem}</span>
+                          <span>{visibleDesktopProblem}</span>
                         </div>
                       ) : null}
                     </div>

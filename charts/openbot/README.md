@@ -15,7 +15,7 @@ node pool being the wrong shape is the last thing anybody checks. Either run amd
 architecture you have and push it somewhere the cluster can reach. Check before assuming:
 
 ```sh
-docker manifest inspect ghcr.io/copilotkit/openbot:v0.0.4 | grep architecture
+docker manifest inspect ghcr.io/copilotkit/openbot:v0.0.5 | grep architecture
 ```
 
 **Intelligence credentials.** OpenBot requires CopilotKit Intelligence and the chart refuses to
@@ -214,9 +214,9 @@ That only happens in multi-zone clusters, so it passes every single-zone test.
 
 ### Storage has gravity
 
-The API tier holds nothing on disk. When per-Bot computers arrive they will, and the ordinary block
-volume on all three clouds is **zonal**: once provisioned, every pod referencing it is scheduled into
-that zone, so a Bot's computer is pinned to a zone for as long as its profile exists. That is
+The API tier holds nothing on disk. Per-Bot computers do, and the ordinary block volume on all three
+clouds is **zonal**: once provisioned, every pod referencing it is scheduled into that zone, so a
+Bot's computer is pinned to a zone for as long as its profile exists. That is
 acceptable and worth stating rather than discovering. `storageClass` stays empty by default, meaning
 the cluster's default class, because naming `gp3` or `pd-balanced` here is how a chart stops
 installing on somebody's bare-metal cluster.
@@ -263,7 +263,7 @@ cannot be told apart from another Bot's is refused rather than filed under the w
 conversation still names the page it opened; it just does not show it, and the server log says why
 each time.
 
-With `computers.mode: sandbox` or `external`, each Bot has a computer of its own, there is nobody to
+With `computers.mode: sandbox`, `vm`, or `external`, each Bot has a computer of its own, there is nobody to
 race with, and this does not arise.
 
 ## A computer for each Bot
@@ -274,6 +274,7 @@ race with, and this does not arise.
 | --- | --- | --- |
 | `shared` | One browser for every Bot, run by this chart. | Nothing. |
 | `sandbox` | A computer each, suspended when idle and resumed with its logins intact. | The `agent-sandbox` controller in the cluster. |
+| `vm` | A full graphical computer for each Bot inside its own lightweight VM, suspended when idle and resumed with its logins intact. | The `agent-sandbox` controller and a VM-backed RuntimeClass such as Kata Containers. |
 | `external` | Neither; `computers.url` points at one somebody else runs. | Nothing. |
 
 `shared` is what a first install should use. Sessions, files and logins are shared between Bots in
@@ -282,6 +283,18 @@ that mode, which is stated on the fleet page rather than hidden.
 `sandbox` uses `kubernetes-sigs/agent-sandbox`, whose `Sandbox` CRD is built for exactly this
 workload: an isolated, stateful, singleton pod with a stable identity and persistent storage.
 Suspending is `operatingMode: Suspended`, which terminates the pod and keeps the volumes.
+
+`vm` uses that same lifecycle but refuses to render without `computers.runtimeClassName`. Point it at
+a VM-backed runtime such as `kata-qemu`: each Bot's browser, desktop, shell, profile and workspace
+then live behind their own guest kernel rather than sharing the node kernel. The chart can require a
+RuntimeClass name but cannot inspect what an operator mapped that name to, so verifying the class is
+Kata or another microVM runtime remains a cluster installation step.
+
+```yaml
+computers:
+  mode: vm
+  runtimeClassName: kata-qemu
+```
 
 **That controller is not installed by this chart, and the chart refuses to install without it.**
 The check reads the cluster, so it is a real answer rather than a value somebody has to remember:
