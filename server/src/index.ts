@@ -175,7 +175,7 @@ const agentVault = {
 };
 const agentProfileStore = createAgentProfileStore(
   database,
-  config.managedAgent?.endpoint,
+  config.agentProviders,
   agentVault,
 );
 // Read here rather than beside the synchronise below, because the package names the deployment and
@@ -209,7 +209,7 @@ const roleRepository = createRoleRepository(database);
 const loadAgentsForActor = createRuntimeAgentLoader(
   database,
   agentVault,
-  config.managedAgent,
+  config.agentProviders,
 );
 await synchronizeTenantPackage(database, tenantPackage);
 /*

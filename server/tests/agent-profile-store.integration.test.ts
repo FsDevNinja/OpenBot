@@ -245,6 +245,25 @@ describe("agent profile store integration", () => {
     ).rejects.toBeInstanceOf(ManagedAgentUnavailableError);
   });
 
+  test("stores the configured provider as the agent's engine", async () => {
+    const owner = await createUser();
+    const created = await store.create(owner, {
+      name: "Researcher",
+      title: "Research and Synthesis",
+      roleDescription: "Investigate questions and write sourced briefs.",
+      visibility: "private",
+      providerId: "openai",
+    });
+    createdAgentIds.push(created.id);
+
+    expect(created).toMatchObject({
+      providerId: "openai",
+      endpoint: managedAgentAgUiUrl.toString(),
+      ownerUserId: owner.id,
+      visibility: "private",
+    });
+  });
+
   test("lets an owner and admin get and list a private profile but hides it from another user", async () => {
     const owner = await createUser();
     const other = await createUser();

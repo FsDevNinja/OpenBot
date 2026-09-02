@@ -1044,12 +1044,9 @@ export function createApp(
               runsHere: (agentId) => pluginStore.agentRunsHere(agentId),
             }
           : undefined,
-        // Whether "built-in" is a kind of coworker this deployment can actually make: the create
-        // path falls back to the managed Bot's endpoint, so without one it can only refuse.
-        config.managedAgent !== undefined,
-        // The managed Bot's address, so a coworker created without an endpoint — which creation
-        // stores as running at this address — can be told apart from one a person hosts.
-        config.managedAgent?.endpoint.toString(),
+        // Providers power coworkers but are not coworkers themselves. The route publishes only
+        // their safe catalogue metadata; endpoints and runtime tokens stay server-side.
+        config.agentProviders,
       ),
     );
     // Choosing a coworker for an untagged message needs the same permission-filtered roster the

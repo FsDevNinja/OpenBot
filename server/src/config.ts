@@ -4,6 +4,12 @@
  * boot boundary.
  */
 import { singleUserEnabled } from "./auth/dev-actor";
+import {
+  AGENT_PROVIDER_CATALOG,
+  type AgentProviderId,
+  type AgentProviderRuntime,
+  isAgentProviderId,
+} from "./agents/providers";
 import type { ActionPolicy } from "./computer/policy";
 import { parseActionPolicy } from "./computer/policy-store";
 
@@ -142,6 +148,8 @@ export type DeploymentConfig = {
    * when a remote Bot is actually running.
    */
   managedAgent?: ManagedAgentConfig;
+  /** Model/runtime providers a person may choose when creating a private agent. */
+  agentProviders: AgentProviderRuntime[];
   /**
    * Private addresses an agent may be registered at, named one at a time.
    *
@@ -820,6 +828,81 @@ function generativeUiEnabled(environment: Environment): boolean {
 }
 
 /**
+ * Whether this deployment is deliberately reusing the host's signed-in Codex account.
+ *
+ * Unlike a provider API key, that login belongs to the person running this machine. Treating any
+ * other spelling as false would make a typo silently remove the multi-user safety check below, so
+ * this switch is strict even when the start script is bypassed and the server is run directly.
+ */
+function localCodexEnabled(environment: Environment): boolean {
+  const value = optional(environment, "CODEX_AGENT_ENABLED");
+  if (!value || value === "false") return false;
+  if (value === "true") return true;
+  throw new Error("CODEX_AGENT_ENABLED must be true or false");
+}
+
+const PROVIDER_ENV_NAMES: Record<AgentProviderId, string> = {
+  codex: "CODEX",
+  openai: "OPENAI",
+  anthropic: "ANTHROPIC",
+  xai: "XAI",
+  google: "GOOGLE",
+};
+
+/**
+ * Provider runtimes are deployment resources; agents only store which one they use.
+ *
+ * The old MANAGED_AGENT pair remains the default runtime for compatibility. Named pairs add more
+ * choices without putting an API key or subscription credential on every agent row.
+ */
+function agentProviderConfigs(
+  environment: Environment,
+  managedAgent: ManagedAgentConfig | undefined,
+): AgentProviderRuntime[] {
+  const configured = new Map<AgentProviderId, AgentProviderRuntime>();
+  const add = (id: AgentProviderId, endpoint: URL, token: string): void => {
+    const definition = AGENT_PROVIDER_CATALOG.find(
+      (candidate) => candidate.id === id,
+    );
+    if (!definition) return;
+    configured.set(id, { ...definition, endpoint, token });
+  };
+
+  if (managedAgent) {
+    const named = optional(environment, "MANAGED_AGENT_PROVIDER");
+    const inferred = localCodexEnabled(environment)
+      ? "codex"
+      : (optional(environment, "BOT_PROVIDER") ?? "openai").toLowerCase();
+    const id = (named ?? inferred).toLowerCase();
+    if (!isAgentProviderId(id)) {
+      throw new Error(
+        `MANAGED_AGENT_PROVIDER must be one of ${AGENT_PROVIDER_CATALOG.map((provider) => provider.id).join(", ")}`,
+      );
+    }
+    add(id, managedAgent.endpoint, managedAgent.token);
+  }
+
+  for (const definition of AGENT_PROVIDER_CATALOG) {
+    const prefix = `AGENT_PROVIDER_${PROVIDER_ENV_NAMES[definition.id]}`;
+    const endpoint = optionalHttpUrl(environment, `${prefix}_AG_UI_URL`);
+    const token = optional(environment, `${prefix}_TOKEN`);
+    if (endpoint && !token) {
+      throw new Error(
+        `${prefix}_TOKEN must be set when ${prefix}_AG_UI_URL is set`,
+      );
+    }
+    if (!endpoint && token) {
+      throw new Error(
+        `${prefix}_AG_UI_URL must be set when ${prefix}_TOKEN is set`,
+      );
+    }
+    if (endpoint && token) add(definition.id, endpoint, token);
+  }
+
+  return [...configured.values()];
+}
+
+/**
  * How long the audit trail is kept.
  *
  * Refused rather than coerced, like everything else here. "We accepted your retention policy but not
@@ -860,12 +943,33 @@ export function loadConfig(
   const google = oauthClient(environment, "GOOGLE");
   const auth = authConfig(environment, google);
   const managedAgent = managedAgentConfig(environment);
+  const agentProviders = agentProviderConfigs(environment, managedAgent);
   const workerSharedSecret = optional(environment, "WORKER_SHARED_SECRET");
+  // Keep the minimum runtime contract ahead of optional deployment-mode checks in the boot error
+  // order: a deployment with no runtime cannot exist in either single- or multi-user form.
+  const runtime = runtimeCapabilities(environment);
+  const singleUser = singleUserEnabled(
+    environment,
+    configuredAuthProviders(auth).length > 0,
+  );
+
+  /*
+   * The Codex adapter has one host login, not one credential per OpenBot user. Personal coworker
+   * profiles are useful — each has its own standing role, channels and grants — but putting a
+   * sign-in screen in front of that one account would make every admitted user exercise the same
+   * person's Codex authority. Refuse that deployment shape at boot, where the boundary is clear.
+   */
+  if (localCodexEnabled(environment) && !singleUser) {
+    throw new Error(
+      "CODEX_AGENT_ENABLED reuses one host Codex login and requires OPENBOT_SINGLE_USER=true with no identity provider. Disable local Codex before enabling shared sign-in.",
+    );
+  }
 
   return {
     databaseUrl: required(environment, "DATABASE_URL"),
     keyEncryptionKey: keyEncryptionKey(environment),
     ...(managedAgent ? { managedAgent } : {}),
+    agentProviders,
     agentEndpointAllowedHosts: agentEndpointAllowedHosts(environment),
     deploymentId: optional(environment, "DEPLOYMENT_ID"),
     publicUrl: (
@@ -879,15 +983,12 @@ export function loadConfig(
     )?.replace(/\/+$/, ""),
     tenantPackageDirectory:
       optional(environment, "TENANT_PACKAGE_DIR") ?? "../examples/fintech",
-    runtime: runtimeCapabilities(environment),
+    runtime,
     agentStallTimeoutMs: agentStallTimeoutMs(environment),
     auditRetentionDays: auditRetentionDays(environment),
     oauth: { google },
     auth,
-    singleUser: singleUserEnabled(
-      environment,
-      configuredAuthProviders(auth).length > 0,
-    ),
+    singleUser,
     accessibility: accessibilityEnabled(environment),
     generativeUi: generativeUiEnabled(environment),
     ...(optional(environment, "APP_DIST_DIR")

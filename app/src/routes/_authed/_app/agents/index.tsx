@@ -57,7 +57,7 @@ function AgentsScreen() {
       <div className="max-w-2xl px-4 w-full mx-auto">
         <div className="mt-12 w-full max-w-2xl">
           <div className="flex flex-row w-full items-center justify-between">
-            <h2 className="font-bold text-lg">Your agents</h2>
+            <h2 className="font-bold text-lg">Your team</h2>
             <Button
               variant="ghost"
               size="sm"
@@ -66,7 +66,7 @@ function AgentsScreen() {
               )}
             >
               <IconPlus />
-              New agent
+              New team member
             </Button>
           </div>
           <div className="flex flex-row mt-4">
@@ -87,7 +87,7 @@ function AgentsScreen() {
               <Empty className="border border-dashed h-[180px]">
                 <EmptyHeader>
                   <EmptyTitle className="text-muted-foreground">
-                    You don't have any agents created.
+                    You haven't added anyone to your team yet.
                   </EmptyTitle>
                 </EmptyHeader>
               </Empty>
@@ -95,7 +95,7 @@ function AgentsScreen() {
           </div>
         </div>
         <div className="mt-8 w-full max-w-2xl">
-          <h2 className="font-bold text-lg">Explore agents</h2>
+          <h2 className="font-bold text-lg">Available agents</h2>
           <div className="mt-4 grid grid-cols-[repeat(auto-fill,144px)] gap-4">
             {!!explore?.length &&
               explore.map((agent, index) => {

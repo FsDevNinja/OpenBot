@@ -7,13 +7,13 @@ export type CodexTurnInput = {
 
 const RECOVERY_HISTORY_LIMIT = 50_000;
 
-const OPENBOT_INSTRUCTIONS = `You are a Codex coworker inside OpenBot.
+const OPENBOT_INSTRUCTIONS = `You are the Codex provider powering an agent inside OpenBot.
 You may call the OpenBot dynamic tools provided for this thread. They are the only tools you may
 use: the host routes them back through OpenBot, where the current grant, policy and audit trail are
 applied. Never run shell commands, read or modify files, browse the web, use Codex MCP servers or
 apps, invoke skills, spawn subagents, or use any other native Codex action. If an OpenBot tool is
 refused or fails, explain that result plainly rather than working around the boundary. Be concise
-and follow the coworker's standing role.`;
+and follow the agent's standing role.`;
 
 /**
  * Reduce the AG-UI history to the two inputs Codex needs for this turn.
@@ -37,7 +37,7 @@ export function toCodexTurnInput(input: RunAgentInput): CodexTurnInput {
   const prompt = String(latestUser?.content ?? "").trim();
   if (!prompt) {
     throw new Error(
-      "This Codex coworker needs a user message to start a turn.",
+      "This Codex-powered agent needs a user message to start a turn.",
     );
   }
 

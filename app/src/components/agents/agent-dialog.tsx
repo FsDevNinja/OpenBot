@@ -263,15 +263,18 @@ function GeneralSection({
   const save = (patch: Partial<AgentFormValues>) =>
     updateAgent.mutateAsync({
       agentId,
-      input: agentInputFrom({
-        name: profile.name,
-        title: profile.title,
-        roleDescription: profile.roleDescription,
-        visibility: profile.visibility,
-        endpoint: profile.endpoint ?? "",
-        authValue: "",
-        ...patch,
-      }),
+      input: agentInputFrom(
+        {
+          name: profile.name,
+          title: profile.title,
+          roleDescription: profile.roleDescription,
+          visibility: profile.visibility,
+          endpoint: profile.provider ? "" : (profile.endpoint ?? ""),
+          authValue: "",
+          ...patch,
+        },
+        profile.provider?.id,
+      ),
     });
 
   return (
@@ -680,20 +683,26 @@ function ConnectionSection({
   profile: AgentProfile;
 }) {
   /*
-   * A built-in coworker is done the moment it exists: it runs on the deployment's own Bot, whose
-   * process already holds the deployment's tool credential, so its tool calls authenticate with no
+   * A provider-managed agent is done the moment it exists: its provider runtime already holds the
+   * deployment's tool credential, so its tool calls authenticate with no
    * setup. Showing it the endpoint and the callback-token panel told the person the opposite —
    * an internal address they never typed, and a credential they were never supposed to need.
    */
-  if (!profile.endpoint || profile.builtIn) {
+  if (profile.provider) {
     return (
-      <p className="text-sm text-muted-foreground">
-        Runs on this deployment's own Bot. Nothing to connect and nothing to
-        authenticate: its tool calls are covered by the deployment's own
-        credential.
-      </p>
+      <section className="grid gap-2">
+        <h2 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+          Provider
+        </h2>
+        <p className="text-sm">{profile.provider.name}</p>
+        <p className="text-sm text-muted-foreground">
+          This deployment manages the provider connection. This agent keeps its
+          own role, channels, grants, and conversation state.
+        </p>
+      </section>
     );
   }
+  if (!profile.endpoint) return null;
   return (
     <>
       <section className="grid gap-2">

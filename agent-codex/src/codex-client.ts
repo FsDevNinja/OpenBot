@@ -124,7 +124,7 @@ export class CodexAppServerClient {
     await this.request("initialize", {
       clientInfo: {
         name: "openbot_local_codex",
-        title: "OpenBot local Codex coworker",
+        title: "OpenBot local Codex provider",
         version: "0.0.2",
       },
       capabilities: { experimentalApi: true },

@@ -18,6 +18,7 @@ import {
   sameToken,
 } from "./callback-token";
 import { canCustomizeAgentAvatar, canManageAgent } from "./profile-policy";
+import { AGENT_PROVIDER_CATALOG, type AgentProviderRuntime } from "./providers";
 import type {
   AgentActor,
   AgentProfile,
@@ -106,7 +107,7 @@ export class ProtectedAgentError extends Error {
 export class ManagedAgentUnavailableError extends Error {
   constructor() {
     super(
-      "This deployment has no managed Bot. Give the coworker its own AG-UI endpoint.",
+      "The selected provider is not configured on this deployment. Choose an available provider or give the agent a custom AG-UI endpoint.",
     );
     this.name = "ManagedAgentUnavailableError";
   }
@@ -174,6 +175,7 @@ function mapProfile(
     hidden: row.hiddenAt !== null,
     deletedAt: row.deletedAt,
     endpoint: endpointOf(row.configuration),
+    providerId: providerIdOf(row.configuration),
     // Whether a key is set, never which. The form needs to show "a key is set" so a person does not
     // wipe one by saving an unrelated edit; showing the value would put a secret in a screenshot.
     hasAuth: authFromConfiguration(row.configuration) !== null,
@@ -192,6 +194,12 @@ function endpointOf(configuration: unknown): string | null {
   if (!configuration || typeof configuration !== "object") return null;
   const endpoint = (configuration as { endpoint?: unknown }).endpoint;
   return typeof endpoint === "string" ? endpoint : null;
+}
+
+function providerIdOf(configuration: unknown): string | null {
+  if (!configuration || typeof configuration !== "object") return null;
+  const providerId = (configuration as { providerId?: unknown }).providerId;
+  return typeof providerId === "string" ? providerId : null;
 }
 
 async function findAccessibleProfile(
@@ -284,16 +292,25 @@ async function findByTokenHash(
 
 export function createAgentProfileStore(
   database: Database,
-  managedAgentAgUiUrl: URL | undefined,
+  configuredProviders: URL | readonly AgentProviderRuntime[] | undefined,
   /**
    * Where a customer agent's key is kept. Optional so a deployment without a vault still runs; an
    * agent with a key then simply cannot be created, which is better than storing it in the clear.
    */
   vault?: { store: CredentialStore; encryptionKey: string },
 ): AgentProfileStore {
-  const managedConfiguration = managedAgentAgUiUrl
-    ? { endpoint: managedAgentAgUiUrl.toString() }
-    : undefined;
+  const providers: readonly AgentProviderRuntime[] =
+    configuredProviders instanceof URL
+      ? [
+          {
+            ...(AGENT_PROVIDER_CATALOG.find(
+              (provider) => provider.id === "openai",
+            ) as (typeof AGENT_PROVIDER_CATALOG)[number]),
+            endpoint: configuredProviders,
+            token: "",
+          },
+        ]
+      : (configuredProviders ?? []);
 
   return {
     async list(actor, hidden = false) {
@@ -332,12 +349,26 @@ export function createAgentProfileStore(
     create(actor, input) {
       return database.transaction(async (transaction) => {
         const id = newAgentId();
-        const endpoint = input.endpoint
-          ? { endpoint: input.endpoint }
-          : managedConfiguration;
-        if (!endpoint) {
+        const provider = input.providerId
+          ? providers.find((candidate) => candidate.id === input.providerId)
+          : undefined;
+        if (input.providerId && !provider) {
           throw new ManagedAgentUnavailableError();
         }
+        const configuration = provider
+          ? {
+              endpoint: provider.endpoint.toString(),
+              providerId: provider.id,
+            }
+          : input.endpoint
+            ? { endpoint: input.endpoint }
+            : providers.length === 1
+              ? {
+                  endpoint: providers[0]?.endpoint.toString(),
+                  providerId: providers[0]?.id,
+                }
+              : undefined;
+        if (!configuration) throw new ManagedAgentUnavailableError();
         await transaction.insert(agents).values({
           id,
           name: input.name,
@@ -348,7 +379,7 @@ export function createAgentProfileStore(
           // The key, if there is one, goes to the vault and only its reference is stored here. See
           // auth-header.ts for why a bearer token must not sit next to the endpoint.
           configuration: {
-            ...endpoint,
+            ...configuration,
             ...(input.auth && vault
               ? {
                   auth: await storeAgentAuth({
@@ -405,9 +436,25 @@ export function createAgentProfileStore(
             string,
             unknown
           >;
+          const provider = input.providerId
+            ? providers.find((candidate) => candidate.id === input.providerId)
+            : undefined;
+          if (input.providerId && !provider) {
+            throw new ManagedAgentUnavailableError();
+          }
+          const { providerId: _previousProvider, ...withoutProvider } =
+            previous;
+          const connection = provider
+            ? {
+                endpoint: provider.endpoint.toString(),
+                providerId: provider.id,
+              }
+            : input.endpoint
+              ? { endpoint: input.endpoint }
+              : {};
           const configuration = {
-            ...previous,
-            ...(input.endpoint ? { endpoint: input.endpoint } : {}),
+            ...(provider || input.endpoint ? withoutProvider : previous),
+            ...connection,
             ...(input.auth && vault
               ? {
                   auth: await storeAgentAuth({
@@ -488,15 +535,26 @@ export function createAgentProfileStore(
           .where(eq(agentProfiles.agentId, id))
           .limit(1);
 
-        if (!managedConfiguration) {
-          throw new ManagedAgentUnavailableError();
-        }
+        const provider = providers.find(
+          (candidate) =>
+            candidate.id === source.providerId ||
+            candidate.endpoint.toString() === source.endpoint,
+        );
+        const configuration = provider
+          ? {
+              endpoint: provider.endpoint.toString(),
+              providerId: provider.id,
+            }
+          : source.endpoint
+            ? { endpoint: source.endpoint }
+            : undefined;
+        if (!configuration) throw new ManagedAgentUnavailableError();
         const duplicateId = newAgentId();
         await transaction.insert(agents).values({
           id: duplicateId,
           name: source.name,
           type: "remote_ag_ui",
-          configuration: managedConfiguration,
+          configuration,
         });
         await transaction.insert(agentProfiles).values({
           agentId: duplicateId,

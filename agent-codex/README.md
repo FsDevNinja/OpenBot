@@ -1,7 +1,8 @@
-# Codex coworker
+# Codex provider adapter
 
-This local-only AG-UI adapter lets OpenBot talk to the installed Codex app-server using the ChatGPT
-account already authenticated by `codex login`.
+This local-only AG-UI provider lets OpenBot agents talk to the installed Codex app-server using the
+ChatGPT account already authenticated by `codex login`. Codex is the engine, not an agent profile:
+people create named roles in OpenBot and select Codex to power them.
 
 The adapter records the join between each OpenBot Intelligence thread and its persistent Codex
 thread in `.openbot-codex/threads.json`. On every later run—including after the adapter restarts—it
@@ -19,3 +20,8 @@ Enable it with `CODEX_AGENT_ENABLED=true`. `scripts/start.sh` then runs this ada
 `CODEX_AGENT_PORT` (default `4202`) and skips the two provider-API-key Bot containers. The start
 script supplies `AGENT_TOOL_TOKEN`, `OPENBOT_TOOL_URL` and `CODEX_AGENT_STATE`; set those explicitly
 when starting `agent-codex` by hand.
+
+Local Codex mode requires `OPENBOT_SINGLE_USER=true` and no identity provider. That is intentional:
+the adapter has one person's host login, so serving it to several signed-in users would share that
+person's Codex authority. A solo user can still create any number of private OpenBot team members;
+each gets separate standing instructions and thread mappings while using the same local adapter.

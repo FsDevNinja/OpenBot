@@ -5,6 +5,7 @@ import { createDatabase } from "../src/db/client";
 import {
   agentProfiles,
   agents,
+  channels,
   deploymentPackages,
   pluginGrants,
   skills as skillsTable,
@@ -29,10 +30,14 @@ const database = createDatabase(
 );
 const createdAgentIds: string[] = [];
 const createdPackageIds: string[] = [];
+const createdChannelIds: string[] = [];
 const createdTenantIds: string[] = [];
 const createdUserIds: string[] = [];
 
 afterEach(async () => {
+  for (const channelId of createdChannelIds.splice(0)) {
+    await database.delete(channels).where(eq(channels.id, channelId));
+  }
   for (const agentId of createdAgentIds.splice(0)) {
     await database.delete(agents).where(eq(agents.id, agentId));
   }
@@ -464,12 +469,14 @@ describe("tenant package agent profile synchronization", () => {
   test("synchronizes normally when no such Bot exists", async () => {
     // The permissive half, so the check above is proved to be about the reserved id and not about
     // any pre-existing row.
+    const ordinaryAgentId = `policy-desk-${randomUUID()}`;
     await database.insert(agents).values({
-      id: `policy-desk-${randomUUID()}`,
+      id: ordinaryAgentId,
       name: "An ordinary Bot",
       type: "built_in",
       configuration: {},
     });
+    createdAgentIds.push(ordinaryAgentId);
     const agent = packageAgent();
     const deploymentPackage = await synchronizeTenantPackage(
       database,
@@ -536,6 +543,60 @@ describe("tenant package agent profile synchronization", () => {
     expect(profile?.updatedAt.getTime()).toBeGreaterThan(
       oldUpdatedAt.getTime(),
     );
+  });
+
+  test("retires agents and channels the package stops declaring, and can restore them", async () => {
+    const agent = packageAgent();
+    const channelId = `channel-${randomUUID()}`;
+    const first = {
+      ...loadedPackage(agent),
+      channels: [
+        {
+          id: channelId,
+          name: "Starter conversation",
+          description: "A package-provided starting point.",
+          permittedAgents: [agent.id],
+          allowedGroups: ["all"],
+        },
+      ],
+    };
+    const deploymentPackage = await synchronizeTenantPackage(database, first);
+    createdAgentIds.push(agent.id);
+    createdChannelIds.push(channelId);
+    createdPackageIds.push(deploymentPackage.id);
+
+    await synchronizeTenantPackage(database, {
+      ...first,
+      agents: [],
+      channels: [],
+      checksum: randomUUID(),
+    });
+
+    const [retiredAgent] = await database
+      .select({ deletedAt: agentProfiles.deletedAt })
+      .from(agentProfiles)
+      .where(eq(agentProfiles.agentId, agent.id));
+    const [retiredChannel] = await database
+      .select({ deletedAt: channels.deletedAt })
+      .from(channels)
+      .where(eq(channels.id, channelId));
+    expect(retiredAgent?.deletedAt).toBeInstanceOf(Date);
+    expect(retiredChannel?.deletedAt).toBeInstanceOf(Date);
+
+    await synchronizeTenantPackage(database, {
+      ...first,
+      checksum: randomUUID(),
+    });
+    const [restoredAgent] = await database
+      .select({ deletedAt: agentProfiles.deletedAt })
+      .from(agentProfiles)
+      .where(eq(agentProfiles.agentId, agent.id));
+    const [restoredChannel] = await database
+      .select({ deletedAt: channels.deletedAt })
+      .from(channels)
+      .where(eq(channels.id, channelId));
+    expect(restoredAgent?.deletedAt).toBeNull();
+    expect(restoredChannel?.deletedAt).toBeNull();
   });
 
   test("rejects a user-created canonical and profile collision without changing them", async () => {

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { agentFormSchema } from "@/lib/agents/form";
+import { agentFormSchema, agentInputFrom } from "@/lib/agents/form";
 import { agentKeys } from "@/lib/agents/queries";
 import { channelKeys } from "@/lib/channels/queries";
 
@@ -84,5 +84,27 @@ describe("coworker form validation", () => {
     expect(
       agentFormSchema.safeParse({ ...valid, visibility: "everyone" }).success,
     ).toBe(false);
+  });
+
+  test("sends a provider as the engine without leaking its endpoint into the profile form", () => {
+    expect(
+      agentInputFrom(
+        {
+          name: "Researcher",
+          title: "Research and Synthesis",
+          roleDescription: "Investigate and write briefs.",
+          visibility: "private",
+          endpoint: "",
+          authValue: "",
+        },
+        "codex",
+      ),
+    ).toEqual({
+      name: "Researcher",
+      title: "Research and Synthesis",
+      roleDescription: "Investigate and write briefs.",
+      visibility: "private",
+      providerId: "codex",
+    });
   });
 });

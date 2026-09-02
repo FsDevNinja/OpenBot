@@ -2,8 +2,8 @@ import type { RuntimeModel } from "../copilot";
 
 /**
  * The one model call the router makes, kept apart from the routing logic so that logic stays a pure
- * function the tests drive without a network. This reuses the deployment's own model and key — the
- * same ones the built-in coworkers answer on — so a router is never a second thing to configure.
+ * function the tests drive without a network. This reuses the deployment's default model and key,
+ * so a router is never a second thing to configure.
  *
  * It throws on a missing key or a bad response on purpose: the router treats a throw as "not sure"
  * and lands on the default, so failure here is a soft landing, not an error a person sees.

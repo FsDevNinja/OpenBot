@@ -44,9 +44,8 @@ import { queryClient } from "@/query-client";
  * Creating a coworker, one question at a time.
  *
  * A wizard rather than a form, because the answers are three different kinds of decision: who this
- * coworker is, who may see it, and where it runs. The last one is the fork — a built-in coworker
- * needs nothing more, a managed one needs an endpoint — and a flat form showing endpoint fields to
- * everybody made the common case read like the hard one.
+ * coworker is, who may see it, and what powers it. Provider credentials belong to the deployment,
+ * not to the agent profile; a custom AG-UI endpoint remains the escape hatch.
  */
 export function CreateAgentDialog({
   open,
@@ -70,7 +69,7 @@ export function CreateAgentDialog({
 }
 
 /** The steps, in the order they are asked. The name is the questionnaire item's name. */
-const STEPS = ["identity", "visibility", "kind"] as const;
+const STEPS = ["identity", "visibility", "provider"] as const;
 type StepName = (typeof STEPS)[number];
 
 /** The two ways a coworker can be seen. */
@@ -91,30 +90,7 @@ const VISIBILITY_OPTIONS: Array<{
   },
 ];
 
-/**
- * Where the coworker runs. Not a stored field: the server knows only whether an endpoint was
- * given, so "built-in" is the empty endpoint and this choice exists to make that fork explicit.
- */
-type AgentKind = "builtin" | "managed";
-
-const KIND_OPTIONS: Array<{
-  value: AgentKind;
-  title: string;
-  description: string;
-}> = [
-  {
-    value: "builtin",
-    title: "Built-in",
-    description:
-      "Runs on this deployment's own Bot. Nothing to host or connect — it is ready the moment it is created.",
-  },
-  {
-    value: "managed",
-    title: "Managed",
-    description:
-      "Runs on an agent you host, spoken to over AG-UI. This server dials your endpoint on every run.",
-  },
-];
+type ProviderChoice = string | "external";
 
 /** The first step's slice of the form contract, so its errors match the server's limits. */
 const identitySchema = agentFormSchema.pick({
@@ -154,21 +130,15 @@ function CreateAgentWizard({
   onCreated: (agentId: string) => void;
 }) {
   const createAgent = useMutation(createAgentMutationOptions(queryClient));
-  /*
-   * Whether "built-in" is a coworker this deployment can actually make. Assumed true while the
-   * answer is loading, so the common deployment never sees the card flash from disabled to
-   * enabled; the server refuses the create either way, so an optimistic card risks nothing.
-   */
   const { data: capabilities } = useQuery(agentCapabilitiesQueryOptions());
-  const builtInAvailable = capabilities?.builtInAvailable ?? true;
 
   const [step, setStep] = useState(0);
   const [direction, setDirection] = useState(1);
   /** Whether this step's Continue was pressed, which is when its errors become worth showing. */
   const [tried, setTried] = useState(false);
   const [values, setValues] = useState<AgentFormValues>(emptyAgentForm);
-  /** Deliberately unanswered to start with: revealing endpoint fields is the point of asking. */
-  const [kind, setKind] = useState<AgentKind | null>(null);
+  /** Deliberately unanswered: provider choice is separate from the agent's identity. */
+  const [provider, setProvider] = useState<ProviderChoice | null>(null);
 
   const [connection, setConnection] = useState<ConnectionVerdict | null>(null);
   const [testing, setTesting] = useState(false);
@@ -196,8 +166,8 @@ function CreateAgentWizard({
   const identityErrors = tried ? identityIssues(values) : {};
   const endpointError = !tried
     ? undefined
-    : kind === "managed" && values.endpoint.trim() === ""
-      ? "An endpoint is required for a managed coworker."
+    : provider === "external" && values.endpoint.trim() === ""
+      ? "An endpoint is required for a custom AG-UI provider."
       : agentFormSchema.shape.endpoint.safeParse(values.endpoint).error
           ?.issues[0]?.message;
 
@@ -205,9 +175,15 @@ function CreateAgentWizard({
     if (STEPS[step] === "identity") {
       return identitySchema.safeParse(values).success;
     }
-    if (STEPS[step] === "kind") {
-      if (kind === null) return false;
-      if (kind === "builtin") return true;
+    if (STEPS[step] === "provider") {
+      if (provider === null) return false;
+      if (provider !== "external") {
+        return Boolean(
+          capabilities?.providers.some(
+            (candidate) => candidate.id === provider && candidate.available,
+          ),
+        );
+      }
       return (
         values.endpoint.trim() !== "" &&
         agentFormSchema.shape.endpoint.safeParse(values.endpoint).success
@@ -236,7 +212,12 @@ function CreateAgentWizard({
       go(step + 1);
       return;
     }
-    const agent = await createAgent.mutateAsync(agentInputFrom(values));
+    const agent = await createAgent.mutateAsync(
+      agentInputFrom(
+        values,
+        provider && provider !== "external" ? provider : undefined,
+      ),
+    );
     onCreated(agent.id);
   };
 
@@ -244,7 +225,7 @@ function CreateAgentWizard({
     <>
       {/* Read aloud, never shown: each step carries its own heading, and a dialog-level title
           above them made two heading sizes compete. The popup still needs an accessible name. */}
-      <DialogTitle className="sr-only">New coworker</DialogTitle>
+      <DialogTitle className="sr-only">New team member</DialogTitle>
       <DialogBody className="overflow-y-auto">
         <Questionnaire
           item={STEPS[step]}
@@ -309,15 +290,13 @@ function CreateAgentWizard({
                     ) : STEPS[step] === "visibility" ? (
                       <VisibilityStep set={set} values={values} />
                     ) : (
-                      <KindStep
-                        builtInAvailable={builtInAvailable}
+                      <ProviderStep
+                        providers={capabilities?.providers ?? []}
                         endpointError={endpointError}
-                        kind={kind}
-                        onKind={(next) => {
-                          setKind(next);
-                          if (next === "builtin") {
-                            // A built-in coworker has no endpoint; whatever was typed on the way
-                            // past must not ride along into the create.
+                        provider={provider}
+                        onProvider={(next) => {
+                          setProvider(next);
+                          if (next !== "external") {
                             set("endpoint", "");
                             set("authValue", "");
                             setConnection(null);
@@ -326,7 +305,7 @@ function CreateAgentWizard({
                         onTest={() => void testConnection()}
                         connection={connection}
                         set={set}
-                        showKindError={tried && kind === null}
+                        showProviderError={tried && provider === null}
                         testing={testing}
                         values={values}
                       />
@@ -359,7 +338,7 @@ function CreateAgentWizard({
               {last
                 ? createAgent.isPending
                   ? "Creating…"
-                  : "Create coworker"
+                  : "Create team member"
                 : "Continue"}
             </Button>
           </div>
@@ -416,7 +395,7 @@ function IdentityStep({
             aria-invalid={errors.name ? true : undefined}
             id="create-agent-name"
             onChange={(event) => set("name", event.target.value)}
-            placeholder="Expense Manager"
+            placeholder="Chief of Staff"
             value={values.name}
           />
           {errors.name ? (
@@ -429,7 +408,7 @@ function IdentityStep({
             aria-invalid={errors.title ? true : undefined}
             id="create-agent-title"
             onChange={(event) => set("title", event.target.value)}
-            placeholder="Finance Operations"
+            placeholder="Operations and Planning"
             value={values.title}
           />
           {errors.title ? (
@@ -442,7 +421,7 @@ function IdentityStep({
             aria-invalid={errors.roleDescription ? true : undefined}
             id="create-agent-role"
             onChange={(event) => set("roleDescription", event.target.value)}
-            placeholder="Review receipts, categorize expenses, and prepare reimbursement reports."
+            placeholder="Turn priorities into plans, keep decisions organized, and surface anything that needs my attention."
             rows={4}
             value={values.roleDescription}
           />
@@ -487,11 +466,11 @@ function VisibilityStep({
   );
 }
 
-function KindStep({
-  builtInAvailable,
-  kind,
-  onKind,
-  showKindError,
+function ProviderStep({
+  providers,
+  provider,
+  onProvider,
+  showProviderError,
   values,
   set,
   endpointError,
@@ -499,11 +478,15 @@ function KindStep({
   testing,
   onTest,
 }: {
-  /** Whether this deployment has a Bot of its own for a coworker to run on. */
-  builtInAvailable: boolean;
-  kind: AgentKind | null;
-  onKind: (kind: AgentKind) => void;
-  showKindError: boolean;
+  providers: Array<{
+    id: string;
+    name: string;
+    description: string;
+    available: boolean;
+  }>;
+  provider: ProviderChoice | null;
+  onProvider: (provider: ProviderChoice) => void;
+  showProviderError: boolean;
   values: AgentFormValues;
   set: <K extends keyof AgentFormValues>(
     key: K,
@@ -515,40 +498,46 @@ function KindStep({
   onTest: () => void;
 }) {
   return (
-    <StepItem name="kind">
-      <QuestionnaireTitle>Where does it run?</QuestionnaireTitle>
+    <StepItem name="provider">
+      <QuestionnaireTitle>What powers this agent?</QuestionnaireTitle>
+      <QuestionnaireDescription>
+        The provider supplies the model. The name, role, tools, and conversation
+        belong to this agent.
+      </QuestionnaireDescription>
       <QuestionnaireChoices>
-        {KIND_OPTIONS.map((option) => {
-          /*
-           * Shown but not offerable, rather than hidden: a deployment with no managed Bot cannot
-           * back a built-in coworker, and the create would be refused. The card staying visible is
-           * what tells the person the kind exists and why it is not theirs to pick.
-           */
-          const unavailable = option.value === "builtin" && !builtInAvailable;
-          return (
-            <QuestionnaireChoice
-              checked={kind === option.value}
-              disabled={unavailable}
-              key={option.value}
-              onChange={() => onKind(option.value)}
-              value={option.value}
-            >
-              <span className="font-medium">{option.title}</span>
-              <QuestionnaireChoiceDescription>
-                {unavailable
-                  ? "Not available here: this deployment has no Bot of its own for a coworker to run on."
-                  : option.description}
-              </QuestionnaireChoiceDescription>
-            </QuestionnaireChoice>
-          );
-        })}
+        {providers.map((option) => (
+          <QuestionnaireChoice
+            checked={provider === option.id}
+            disabled={!option.available}
+            key={option.id}
+            onChange={() => onProvider(option.id)}
+            value={option.id}
+          >
+            <span className="font-medium">{option.name}</span>
+            <QuestionnaireChoiceDescription>
+              {option.available
+                ? option.description
+                : `${option.description} Not configured on this deployment.`}
+            </QuestionnaireChoiceDescription>
+          </QuestionnaireChoice>
+        ))}
+        <QuestionnaireChoice
+          checked={provider === "external"}
+          onChange={() => onProvider("external")}
+          value="external"
+        >
+          <span className="font-medium">Custom AG-UI</span>
+          <QuestionnaireChoiceDescription>
+            Use an agent runtime you host at your own endpoint.
+          </QuestionnaireChoiceDescription>
+        </QuestionnaireChoice>
       </QuestionnaireChoices>
-      {showKindError ? (
+      {showProviderError ? (
         <p className="text-sm text-destructive" role="alert">
-          Choose where this coworker runs.
+          Choose what powers this agent.
         </p>
       ) : null}
-      {kind === "managed" ? (
+      {provider === "external" ? (
         <FieldGroup>
           <Field data-invalid={endpointError ? true : undefined}>
             <FieldLabel htmlFor="create-agent-endpoint">

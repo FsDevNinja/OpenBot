@@ -291,9 +291,9 @@ green "  coworker tables migrated"
 # pipeline, and `set -e` then aborts the assignment before the check below could say why. The same
 # grep survives inside `setting()` only because `local v="$(...)"` takes `local`'s own exit status
 # and masks it. So: report what was resolved, and do not re-read the file.
-green "  managed coworker endpoint: $MANAGED_AGENT_AG_UI_URL"
+green "  managed provider endpoint: $MANAGED_AGENT_AG_UI_URL"
 if [ "$CODEX_AGENT_ENABLED" = "true" ]; then
-  green "  Codex coworker: ChatGPT login · persistent threads · OpenBot-governed tools"
+  green "  Codex provider: ChatGPT login · persistent threads · OpenBot-governed tools"
 fi
 
 info "2/4  Server"
@@ -406,10 +406,10 @@ if status != "valid":
     print("\033[31m  Run: npx copilotkit@latest login && npx copilotkit@latest license --write\033[0m")
     print("\033[31m  See README.md for Intelligence setup.\033[0m")
     raise SystemExit(1)
-if not agents:
-    print("\033[31m  No Bots registered.\033[0m")
-    raise SystemExit(1)
-print(f"\033[32m  licence valid · mode {info.get('mode')} · Bots: {', '.join(agents)}\033[0m")
+if agents:
+    print(f"\033[32m  licence valid · mode {info.get('mode')} · agents: {', '.join(agents)}\033[0m")
+else:
+    print(f"\033[32m  licence valid · mode {info.get('mode')} · team ready for its first agent\033[0m")
 PY
 
 info "4/4  App"
@@ -442,7 +442,7 @@ Try:
 Logs: $LOGS
   Routine sweep worker: $LOGS/worker.log
 Stop the routine worker: pkill -f 'bun worker/src/index.ts'
-Stop the Codex coworker: pkill -f 'bun agent-codex/src/index.ts'
+Stop the Codex provider: pkill -f 'bun agent-codex/src/index.ts'
 Stop Docker services: docker compose down
   A Bot's computer is made by the supervisor rather than by compose, so it keeps running:
   docker rm -f \$(docker ps -q --filter label=openbot.supervisor=true)

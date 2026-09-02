@@ -52,13 +52,13 @@ export const emptyAgentForm: AgentFormValues = {
 };
 
 /** Convert form values to API input; omit an empty key so editing preserves the current credential. */
-export function agentInputFrom(values: AgentFormValues) {
+export function agentInputFrom(values: AgentFormValues, providerId?: string) {
   return {
     name: values.name,
     title: values.title,
     roleDescription: values.roleDescription,
     visibility: values.visibility,
-    endpoint: values.endpoint,
+    ...(providerId ? { providerId } : { endpoint: values.endpoint }),
     ...(values.authValue.trim()
       ? { auth: { header: "Authorization", value: values.authValue.trim() } }
       : {}),

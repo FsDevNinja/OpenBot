@@ -20,14 +20,17 @@ export type AgentProfile = {
   /** Where this coworker runs. Null for the Bot in the box. */
   endpoint: string | null;
   /**
-   * Whether it runs on this deployment's own Bot.
+   * Legacy compatibility flag for a provider-managed agent.
    *
    * Creating a coworker with no endpoint stores the deployment's managed address, so `endpoint`
-   * alone cannot tell "built-in" from "hosted by a person" — and the difference decides whether the
-   * Connection screen asks for a callback token. A built-in coworker calls tools back with the
+   * alone cannot tell "provider-managed" from "hosted by a person" — and the difference decides whether the
+   * Connection screen asks for a callback token. A provider-managed agent calls tools back with the
    * deployment's own credential and needs no setup at all.
    */
   builtIn: boolean;
+  /** Configured model/runtime provider, or null for a custom AG-UI endpoint. */
+  provider?: { id: string; name: string } | null;
+  providerId?: string | null;
   /** Whether a key is set for it. Never the key itself. */
   hasAuth: boolean;
   /**
@@ -63,6 +66,12 @@ export const agentKeys = {
 export type AgentCapabilities = {
   /** Whether a coworker can run on the deployment's own Bot, with no endpoint of its own. */
   builtInAvailable: boolean;
+  providers: Array<{
+    id: string;
+    name: string;
+    description: string;
+    available: boolean;
+  }>;
 };
 
 export function agentCapabilitiesQueryOptions() {

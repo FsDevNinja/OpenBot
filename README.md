@@ -86,7 +86,7 @@ A Bot is any endpoint speaking [AG-UI](https://github.com/ag-ui-protocol/ag-ui),
 
    - `OPENAI_API_KEY`
 
-   Or, to use the ChatGPT account already signed in through Codex instead of a provider API key,
+   Or, to offer the ChatGPT account already signed in through Codex as an agent provider,
    set `CODEX_AGENT_ENABLED=true` and
    `AGENT_ENDPOINT_ALLOWED_HOSTS=localhost:4202`. See
    [agent-codex/README.md](agent-codex/README.md).
@@ -221,7 +221,7 @@ Settings worth knowing:
 | `COMPUTER_TOKEN`                     | Secret every Bot computer request must present. `start.sh` sets one.      |
 | `SUPERVISOR_TOKEN`                   | Secret the supervisor requires. `start.sh` sets one.                      |
 | `AGENT_TOOL_TOKEN`                   | Secret a Bot presents to call a granted tool back. `start.sh` sets one. Without it no Bot may call tools. |
-| `CODEX_AGENT_ENABLED`                | Runs the host-side Codex adapter on port 4202 and skips the two provider-key Bot containers. |
+| `CODEX_AGENT_ENABLED`                | Offers the host-side Codex provider on port 4202 and skips the two provider-key Bot containers. |
 | `COMPUTER_SUPERVISOR_URL`            | Gives each Bot a computer of its own instead of one shared computer.      |
 | `COMPUTER_RUNTIME`                   | Set to `runsc` to run computers under gVisor, where the host has it.      |
 | `COMPUTER_SANDBOX`                   | Set to `on` for Chromium's own sandbox, where the host permits it.        |

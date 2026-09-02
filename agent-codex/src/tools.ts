@@ -98,7 +98,7 @@ export class OpenBotToolGateway {
   ): Promise<ToolResult> {
     if (!this.options.token) {
       return {
-        text: "Refused. This Codex coworker has no credential for OpenBot's tool gateway.",
+        text: "Refused. This Codex provider has no credential for OpenBot's tool gateway.",
         success: false,
       };
     }

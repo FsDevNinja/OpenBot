@@ -20,6 +20,7 @@ import type {
   AgentProfile,
   CreateAgentInput,
 } from "./profile-types";
+import { AGENT_PROVIDER_CATALOG, type AgentProviderRuntime } from "./providers";
 
 type AgentInputParseResult =
   | { ok: true; value: CreateAgentInput }
@@ -31,6 +32,7 @@ type AgentInputObject = {
   roleDescription?: unknown;
   visibility?: unknown;
   endpoint?: unknown;
+  providerId?: unknown;
   auth?: unknown;
 };
 
@@ -93,6 +95,20 @@ export function parseAgentInput(
     endpoint = verdict.url;
   }
 
+  let providerId: string | undefined;
+  if (input.providerId !== undefined && input.providerId !== "") {
+    if (typeof input.providerId !== "string" || !input.providerId.trim()) {
+      return { ok: false, error: "Provider must be a configured provider id." };
+    }
+    providerId = input.providerId.trim();
+  }
+  if (providerId && endpoint) {
+    return {
+      ok: false,
+      error: "Choose a configured provider or a custom endpoint, not both.",
+    };
+  }
+
   // The key is optional and write-only. An absent field leaves an existing key alone; sending one
   // replaces it. There is no way to read one back, here or anywhere.
   let auth: { header: string; value: string } | undefined;
@@ -114,7 +130,15 @@ export function parseAgentInput(
 
   return {
     ok: true,
-    value: { name, title, roleDescription, visibility, endpoint, auth },
+    value: {
+      name,
+      title,
+      roleDescription,
+      visibility,
+      endpoint,
+      providerId,
+      auth,
+    },
   };
 }
 
@@ -174,25 +198,48 @@ export function createAgentRoutes(
    * The store already refuses such a create on a deployment with no managed Bot; this exists so a
    * screen can say so before somebody fills in three steps of a form that was always going to fail.
    */
-  builtInAvailable = false,
+  providerConfiguration: boolean | readonly AgentProviderRuntime[] = false,
   /**
-   * The managed Bot's own address, so a coworker created without an endpoint can be told apart.
+   * The legacy managed address, so a provider-managed agent can be told from a custom endpoint.
    *
    * Creation bakes this address into the coworker's stored configuration, and afterwards nothing in
    * the row says whether a person supplied it. The difference matters to exactly one screen: a
    * coworker running here calls tools back with the deployment's own credential and needs no setup,
    * while one a person hosts needs a callback token put into their process. Without this flag the
-   * dialog nagged built-in coworkers about a credential they never needed.
+   * dialog nagged provider-managed agents about a credential they never needed.
    */
   managedEndpoint?: string,
 ) {
+  const providers: readonly AgentProviderRuntime[] = Array.isArray(
+    providerConfiguration,
+  )
+    ? providerConfiguration
+    : [];
+  const legacyManaged =
+    !Array.isArray(providerConfiguration) &&
+    providerConfiguration &&
+    managedEndpoint
+      ? {
+          ...AGENT_PROVIDER_CATALOG[1],
+          endpoint: new URL(managedEndpoint),
+          token: "",
+        }
+      : undefined;
+  const availableProviders = legacyManaged ? [legacyManaged] : providers;
   /** The dto with the one fact only this closure knows: whether the coworker runs on our own Bot. */
-  const dto = (actor: AgentActor, agent: AgentProfile) => ({
-    ...agentDto(actor, agent),
-    // A string comparison on purpose: two absent values must not read as "runs on our Bot".
-    builtIn:
-      typeof agent.endpoint === "string" && agent.endpoint === managedEndpoint,
-  });
+  const dto = (actor: AgentActor, agent: AgentProfile) => {
+    const provider = availableProviders.find(
+      (candidate) =>
+        candidate.id === agent.providerId ||
+        candidate.endpoint.toString() === agent.endpoint,
+    );
+    return {
+      ...agentDto(actor, agent),
+      provider: provider ? { id: provider.id, name: provider.name } : null,
+      // Kept for older clients; a configured provider is what this used to call "built in".
+      builtIn: provider !== undefined,
+    };
+  };
   const routes = new Hono<{ Variables: AppVariables }>();
 
   /**
@@ -305,7 +352,17 @@ export function createAgentRoutes(
    * the parameterised route on purpose, so "capabilities" can never be read as an agent id.
    */
   routes.get("/capabilities", requireUser, (context) =>
-    context.json({ capabilities: { builtInAvailable } }),
+    context.json({
+      capabilities: {
+        builtInAvailable: availableProviders.length > 0,
+        providers: AGENT_PROVIDER_CATALOG.map((provider) => ({
+          ...provider,
+          available: availableProviders.some(
+            (configured) => configured.id === provider.id,
+          ),
+        })),
+      },
+    }),
   );
 
   routes.get("/:agentId", requireUser, async (context) => {
@@ -407,6 +464,9 @@ export function createAgentRoutes(
       await record(context, "bot.created", agent.id, {
         name: parsed.value.name,
         ...(parsed.value.endpoint ? { endpoint: parsed.value.endpoint } : {}),
+        ...(parsed.value.providerId
+          ? { providerId: parsed.value.providerId }
+          : {}),
         hasKey: Boolean(parsed.value.auth),
       });
       return context.json({ agent: dto(context.var.actor, agent) }, 201);
@@ -611,6 +671,7 @@ function agentDto(actor: AgentActor, agent: AgentProfile) {
     // Published so the edit form can show it. Safe to expose: it is an address the person supplied,
     // and any credential for it lives in the vault, never in this row.
     endpoint: agent.endpoint,
+    providerId: agent.providerId,
     hasAuth: agent.hasAuth,
     // Whether one exists, never what it is.
     hasCallbackToken: agent.hasCallbackToken,

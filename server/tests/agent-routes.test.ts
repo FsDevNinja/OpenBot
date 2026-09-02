@@ -227,9 +227,74 @@ describe("agent input parser", () => {
       },
     });
   });
+
+  test("accepts a provider instead of a custom endpoint", () => {
+    expect(
+      parseAgentInput({ ...validInput, providerId: " anthropic " }),
+    ).toEqual({
+      ok: true,
+      value: { ...validInput, providerId: "anthropic" },
+    });
+  });
+
+  test("refuses a provider and custom endpoint together", () => {
+    expect(
+      parseAgentInput({
+        ...validInput,
+        providerId: "codex",
+        endpoint: "https://agent.example.test/ag-ui",
+      }),
+    ).toEqual({
+      ok: false,
+      error: "Choose a configured provider or a custom endpoint, not both.",
+    });
+  });
 });
 
 describe("agent lifecycle routes", () => {
+  test("publishes model providers as deployment capabilities, not agents", async () => {
+    const store = fakeStore();
+    const app = new Hono<{ Variables: AppVariables }>();
+    app.route(
+      "/",
+      createAgentRoutes(
+        store,
+        requireUser,
+        false,
+        undefined,
+        new Set(),
+        undefined,
+        [
+          {
+            id: "codex",
+            name: "Codex",
+            description: "Uses the local ChatGPT account.",
+            endpoint: new URL("http://localhost:4202/ag-ui"),
+            token: "runtime-token",
+          },
+        ],
+      ),
+    );
+
+    const response = await app.request("http://openbot.test/capabilities");
+    const body = (await json(response)) as {
+      capabilities: {
+        providers: Array<{ id: string; available: boolean }>;
+      };
+    };
+
+    expect(response.status).toBe(200);
+    expect(
+      body.capabilities.providers.find((provider) => provider.id === "codex"),
+    ).toMatchObject({ id: "codex", available: true });
+    expect(
+      body.capabilities.providers.find(
+        (provider) => provider.id === "anthropic",
+      ),
+    ).toMatchObject({ id: "anthropic", available: false });
+    expect(store.calls).toEqual([]);
+  });
+
   test("attaches authentication middleware to every route before calling the store", async () => {
     const store = fakeStore();
     const denied: MiddlewareHandler<{ Variables: AppVariables }> = (context) =>
@@ -418,6 +483,7 @@ describe("agent lifecycle routes", () => {
           canCustomizeAvatar: true,
           mine: true,
           builtIn: false,
+          provider: null,
         },
         {
           id: "agent-2",
@@ -433,6 +499,7 @@ describe("agent lifecycle routes", () => {
           canCustomizeAvatar: false,
           mine: false,
           builtIn: false,
+          provider: null,
         },
         {
           id: "system-agent",
@@ -448,6 +515,7 @@ describe("agent lifecycle routes", () => {
           canCustomizeAvatar: false,
           mine: false,
           builtIn: false,
+          provider: null,
         },
       ],
     });

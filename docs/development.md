@@ -22,7 +22,7 @@ Put the `cpk-...` runtime key from `project select` in `.env` as
 `INTELLIGENCE_API_KEY`. `license --write` writes `COPILOTKIT_LICENSE_TOKEN`.
 Then add `OPENAI_API_KEY`. To use the local ChatGPT account instead, set
 `CODEX_AGENT_ENABLED=true` and `AGENT_ENDPOINT_ALLOWED_HOSTS=localhost:4202`; see
-[the Codex coworker guide](../agent-codex/README.md).
+[the Codex provider guide](../agent-codex/README.md).
 
 Start the stack:
 

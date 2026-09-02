@@ -10,6 +10,7 @@ import {
 } from "../db/schema";
 import { agentAuthHeaders, authFromConfiguration } from "./auth-header";
 import type { AgentActor } from "./profile-types";
+import type { AgentProviderRuntime } from "./providers";
 
 /**
  * Read the agents one person may run, on every request.
@@ -23,8 +24,16 @@ export function createRuntimeAgentLoader(
   /** Resolves a customer agent's key at load time. Absent means no agent can carry one. */
   vault?: { reader: CredentialSecretReader; encryptionKey: string },
   /** Secret for the deployment-managed Bot. Never sent to customer-owned endpoints. */
-  managedAgent?: { endpoint: URL; token: string },
+  managedAgents?:
+    | { endpoint: URL; token: string }
+    | readonly AgentProviderRuntime[],
 ) {
+  const providerRuntimes: readonly { endpoint: URL; token: string }[] =
+    Array.isArray(managedAgents)
+      ? managedAgents
+      : managedAgents
+        ? [managedAgents]
+        : [];
   return async (actor: AgentActor): Promise<RegisteredAgent[]> => {
     const [active, tombstones] = await Promise.all([
       selectActiveAgents(database, actor),
@@ -47,14 +56,16 @@ export function createRuntimeAgentLoader(
         });
         if (headers) agent.headers = headers;
       }
-      if (
-        agent.type === "remote_ag_ui" &&
-        managedAgent &&
-        agent.endpoint === managedAgent.endpoint.toString()
-      ) {
+      const provider =
+        agent.type === "remote_ag_ui"
+          ? providerRuntimes.find(
+              (runtime) => runtime.endpoint.toString() === agent.endpoint,
+            )
+          : undefined;
+      if (agent.type === "remote_ag_ui" && provider) {
         agent.headers = {
           ...agent.headers,
-          "x-openbot-agent-token": managedAgent.token,
+          "x-openbot-agent-token": provider.token,
         };
       }
       registered.set(agent.id, agent);

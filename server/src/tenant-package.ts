@@ -584,25 +584,6 @@ export async function synchronizeTenantPackage(
   tenantPackage: LoadedTenantPackage,
 ) {
   return database.transaction(async (transaction) => {
-    /*
-     * A Bot already holding one of those names, from a package that declared it before this was
-     * refused. Validation covers the file, and nothing here removes a canonical agent when a package
-     * stops declaring one, so correcting the YAML leaves the row and the router goes on stepping
-     * aside for its path. Checked inside the transaction so a deployment in that state does not come
-     * up half-synchronised, and refused rather than renamed because whose Bot that is, and what
-     * points at it, is not this function's to decide.
-     */
-    const reserved = await transaction
-      .select({ id: agentTable.id })
-      .from(agentTable)
-      .where(inArray(agentTable.id, [...DEPLOYMENT_ROUTES]));
-    if (reserved.length > 0) {
-      const names = reserved.map((agent) => `"${agent.id}"`).join(", ");
-      throw new Error(
-        `Bot ${names} is reserved for a deployment route and cannot exist; rename or remove it before this deployment can start`,
-      );
-    }
-
     const [deploymentPackage] = await transaction
       .insert(deploymentPackages)
       .values({
@@ -622,6 +603,64 @@ export async function synchronizeTenantPackage(
 
     if (!deploymentPackage) {
       throw new Error("Tenant package could not be synchronized");
+    }
+
+    /*
+     * A package is declarative, including removal. Soft-delete what this same package stopped
+     * declaring so conversations remain readable while a retired starter Bot or channel disappears
+     * from every active roster. User-owned rows and rows from another package are outside this
+     * package's authority and are never touched.
+     */
+    const existingPackageAgents = await transaction
+      .select({ id: agentTable.id })
+      .from(agentTable)
+      .where(eq(agentTable.packageId, deploymentPackage.id));
+    const declaredAgentIds = new Set(
+      tenantPackage.agents.map((agent) => agent.id),
+    );
+    const removedAgentIds = existingPackageAgents
+      .map((agent) => agent.id)
+      .filter((id) => !declaredAgentIds.has(id));
+    if (removedAgentIds.length > 0) {
+      await transaction
+        .update(agentProfiles)
+        .set({ deletedAt: new Date(), updatedAt: new Date() })
+        .where(inArray(agentProfiles.agentId, removedAgentIds));
+    }
+
+    const existingPackageChannels = await transaction
+      .select({ id: channelTable.id })
+      .from(channelTable)
+      .where(eq(channelTable.packageId, deploymentPackage.id));
+    const declaredChannelIds = new Set(
+      tenantPackage.channels.map((channel) => channel.id),
+    );
+    const removedChannelIds = existingPackageChannels
+      .map((channel) => channel.id)
+      .filter((id) => !declaredChannelIds.has(id));
+    if (removedChannelIds.length > 0) {
+      await transaction
+        .update(channelTable)
+        .set({ deletedAt: new Date(), updatedAt: new Date() })
+        .where(inArray(channelTable.id, removedChannelIds));
+    }
+
+    /*
+     * Bots may not take a deployment route's name, even if an old malformed row has no profile.
+     * The one exception is a row this exact sync just retired: it cannot run, and keeping it is what
+     * preserves old channel history.
+     */
+    const reserved = (
+      await transaction
+        .select({ id: agentTable.id })
+        .from(agentTable)
+        .where(inArray(agentTable.id, [...DEPLOYMENT_ROUTES]))
+    ).filter((agent) => !removedAgentIds.includes(agent.id));
+    if (reserved.length > 0) {
+      const names = reserved.map((agent) => `"${agent.id}"`).join(", ");
+      throw new Error(
+        `Bot ${names} is reserved for a deployment route and cannot exist; rename or remove it before this deployment can start`,
+      );
     }
 
     for (const agent of tenantPackage.agents) {
@@ -697,6 +736,7 @@ export async function synchronizeTenantPackage(
           description: channel.description,
           allowedGroups: channel.allowedGroups,
           packageId: deploymentPackage.id,
+          deletedAt: null,
         })
         .onConflictDoUpdate({
           target: channelTable.id,
@@ -705,6 +745,7 @@ export async function synchronizeTenantPackage(
             description: channel.description,
             allowedGroups: channel.allowedGroups,
             packageId: deploymentPackage.id,
+            deletedAt: null,
             updatedAt: new Date(),
           },
         });

@@ -17,7 +17,7 @@ const PORT = Number.parseInt(process.env.PORT ?? "4202", 10);
 const MANAGED_AGENT_TOKEN = process.env.MANAGED_AGENT_TOKEN?.trim();
 if (!MANAGED_AGENT_TOKEN) {
   console.error(
-    "MANAGED_AGENT_TOKEN is not set. The Codex coworker will not start without OpenBot authentication.",
+    "MANAGED_AGENT_TOKEN is not set. The Codex provider will not start without OpenBot authentication.",
   );
   process.exit(1);
 }
@@ -25,7 +25,7 @@ if (!MANAGED_AGENT_TOKEN) {
 const TOOL_TOKEN = process.env.AGENT_TOOL_TOKEN?.trim();
 if (!TOOL_TOKEN) {
   console.error(
-    "AGENT_TOOL_TOKEN is not set. The Codex coworker only runs tools through OpenBot's governance gateway.",
+    "AGENT_TOOL_TOKEN is not set. The Codex provider only runs tools through OpenBot's governance gateway.",
   );
   process.exit(1);
 }
@@ -192,7 +192,7 @@ async function runAgent(
           message:
             error instanceof Error
               ? error.message
-              : "The Codex coworker could not answer.",
+              : "The Codex-powered agent could not answer.",
         } as BaseEvent);
       } finally {
         controller.close();

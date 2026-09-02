@@ -133,7 +133,7 @@ where the worker runs rather than a fact about the deployment `loadConfig` descr
 it at the server's own port on a laptop; the Helm chart's routines CronJob points it at the server's
 in-cluster Service address.
 
-## Local Codex coworker
+## Local Codex provider
 
 Local Codex mode runs a host-side AG-UI adapter against the Codex app-server already authenticated by
 `codex login`. It is an alternative to starting the two provider-key Bot containers:
@@ -143,9 +143,14 @@ CODEX_AGENT_ENABLED=true
 AGENT_ENDPOINT_ALLOWED_HOSTS=localhost:4202
 ```
 
-`scripts/start.sh` then makes `http://localhost:4202/ag-ui` the default managed coworker endpoint,
+`scripts/start.sh` then makes `http://localhost:4202/ag-ui` the Codex provider endpoint,
 starts the adapter on the host, and keeps its Codex thread mapping under `.openbot-codex/`. An explicit
 `MANAGED_AGENT_AG_UI_URL` still wins, so remove an old `localhost:4201` value when switching modes.
+
+This mode is deliberately single-user. The adapter reuses one person's host login, so the server
+refuses to start when `CODEX_AGENT_ENABLED=true` is combined with an identity provider. Inside that
+solo workspace, the one adapter can back any number of private team members: each profile has its
+own standing role, channels, tool grants, and (with `OPENBOT_ONE_COMPUTER_EACH=true`) computer.
 
 | Variable                      | Default                              | Meaning |
 | ----------------------------- | ------------------------------------ | ------- |
@@ -160,6 +165,28 @@ starts the adapter on the host, and keeps its Codex thread mapping under `.openb
 The start script supplies `MANAGED_AGENT_TOKEN` and `AGENT_TOOL_TOKEN`. When running the adapter by
 hand, supply both plus `OPENBOT_TOOL_URL` and the state paths yourself. See
 [the adapter guide](../agent-codex/README.md).
+
+## Agent providers
+
+Providers power agents; they are not agents themselves. The creation wizard lists Codex, OpenAI,
+Anthropic, xAI, and Google, and enables only the runtimes configured on this deployment. An agent
+stores the provider id while the provider endpoint and token remain server-side. Name, standing
+role, visibility, channels, grants, avatar, and conversation state remain properties of the agent.
+
+The legacy `MANAGED_AGENT_AG_UI_URL` and `MANAGED_AGENT_TOKEN` pair registers one provider. Codex
+mode identifies it as `codex`; otherwise `MANAGED_AGENT_PROVIDER` or `BOT_PROVIDER` identifies it,
+defaulting to `openai`. Additional providers can be registered at the same time with named pairs:
+
+```dotenv
+AGENT_PROVIDER_ANTHROPIC_AG_UI_URL=https://claude-runtime.example.com/ag-ui
+AGENT_PROVIDER_ANTHROPIC_TOKEN=...
+AGENT_PROVIDER_XAI_AG_UI_URL=https://grok-runtime.example.com/ag-ui
+AGENT_PROVIDER_XAI_TOKEN=...
+```
+
+The same shape is available for `CODEX`, `OPENAI`, and `GOOGLE`. Each URL must point to an AG-UI
+runtime that actually speaks to that vendor; OpenBot does not send vendor API keys to the browser or
+store them on individual agents. A provider with only one half of its URL/token pair stops startup.
 
 ## OpenAI-compatible endpoints
 

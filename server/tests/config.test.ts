@@ -68,6 +68,9 @@ describe("deployment configuration", () => {
       endpoint: new URL("http://localhost:4200/ag-ui"),
       token: "managed-agent-token",
     });
+    expect(config.agentProviders.map((provider) => provider.id)).toEqual([
+      "openai",
+    ]);
     expect(config.tenantPackageDirectory).toBe("../examples/fintech");
   });
 
@@ -139,6 +142,56 @@ describe("deployment configuration", () => {
     delete environment.MANAGED_AGENT_TOKEN;
 
     expect(loadConfig(environment).managedAgent).toBeUndefined();
+  });
+
+  test("allows one local administrator to reuse the host Codex login", () => {
+    const config = loadConfig({
+      ...withoutSignIn,
+      OPENBOT_SINGLE_USER: "true",
+      CODEX_AGENT_ENABLED: "true",
+    });
+    expect(config.singleUser).toBe(true);
+    expect(config.agentProviders.map((provider) => provider.id)).toEqual([
+      "codex",
+    ]);
+  });
+
+  test("registers several named agent providers at once", () => {
+    const environment: Record<string, string | undefined> = {
+      ...baseEnvironment,
+      AGENT_PROVIDER_ANTHROPIC_AG_UI_URL:
+        "https://claude-agent.example.test/ag-ui",
+      AGENT_PROVIDER_ANTHROPIC_TOKEN: "claude-runtime-token",
+      AGENT_PROVIDER_XAI_AG_UI_URL: "https://grok-agent.example.test/ag-ui",
+      AGENT_PROVIDER_XAI_TOKEN: "grok-runtime-token",
+    };
+    delete environment.MANAGED_AGENT_AG_UI_URL;
+    delete environment.MANAGED_AGENT_TOKEN;
+
+    expect(
+      loadConfig(environment).agentProviders.map((provider) => provider.id),
+    ).toEqual(["anthropic", "xai"]);
+  });
+
+  test("refuses to share the host Codex login between signed-in users", () => {
+    expect(() =>
+      loadConfig({
+        ...baseEnvironment,
+        CODEX_AGENT_ENABLED: "true",
+      }),
+    ).toThrow(
+      "CODEX_AGENT_ENABLED reuses one host Codex login and requires OPENBOT_SINGLE_USER=true",
+    );
+  });
+
+  test("refuses an ambiguous local Codex switch", () => {
+    expect(() =>
+      loadConfig({
+        ...withoutSignIn,
+        OPENBOT_SINGLE_USER: "true",
+        CODEX_AGENT_ENABLED: "yes",
+      }),
+    ).toThrow("CODEX_AGENT_ENABLED must be true or false");
   });
 
   test("refuses a URL with no token", () => {

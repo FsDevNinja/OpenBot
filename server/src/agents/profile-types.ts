@@ -22,6 +22,8 @@ export type AgentProfile = {
   deletedAt: Date | null;
   /** Where this coworker runs. Null for the Bot in the box. */
   endpoint: string | null;
+  /** Deployment provider powering this agent, or null for a custom AG-UI endpoint. */
+  providerId?: string | null;
   /** Whether a key is set for it. Never the key. */
   hasAuth: boolean;
   /**
@@ -44,6 +46,8 @@ export type CreateAgentInput = Pick<
    * built-in endpoint.
    */
   endpoint?: string;
+  /** A configured deployment provider. Mutually exclusive with endpoint on creation. */
+  providerId?: string;
   /**
    * A key this agent sits behind, if any.
    *
