@@ -3,7 +3,7 @@ import {
   mergeStoredMessages,
   readableTurns,
   restoreThreadMessages,
-} from "../src/lib/copilot/thread-messages";
+} from "../src/lib/agent/thread-messages";
 
 /**
  * Reading back a conversation that used a tool.

@@ -1,4 +1,4 @@
-import { useFrontendTool, useHumanInTheLoop } from "@copilotkit/react-core/v2";
+import { useFrontendTool, useHumanInTheLoop } from "@/lib/runtime/provider";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { RefusedCard } from "@/components/gallery/refused";
@@ -9,12 +9,12 @@ import {
   decideComponent,
   type GrantedComponent,
 } from "@/lib/components/queries";
-import { useActiveBotId, useDeclaredBotId } from "@/lib/copilot/active-bot";
+import { useActiveBotId, useDeclaredBotId } from "@/lib/agent/active-bot";
 import {
   GALLERY_COMPONENTS,
   type GalleryComponent,
   galleryManifest,
-} from "@/lib/copilot/gallery-registry";
+} from "@/lib/agent/gallery-registry";
 
 /**
  * Register compiled gallery components once per name, scoped to the active Bot with `available`.

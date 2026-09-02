@@ -18,7 +18,7 @@ import {
   agentProfiles,
   agents,
   channels,
-  intelligenceChannelMappings,
+  channelThreads,
   routineRuns,
   routines,
   users,
@@ -113,8 +113,8 @@ afterEach(async () => {
   }
   for (const channelId of createdChannelIds.splice(0)) {
     await database
-      .delete(intelligenceChannelMappings)
-      .where(eq(intelligenceChannelMappings.channelId, channelId));
+      .delete(channelThreads)
+      .where(eq(channelThreads.channelId, channelId));
     await database.delete(channels).where(eq(channels.id, channelId));
   }
   for (const agentId of createdAgentIds.splice(0)) {

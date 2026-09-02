@@ -1,7 +1,7 @@
 import {
   OpenGenerativeUIActivityRenderer,
   useFrontendTool,
-} from "@copilotkit/react-core/v2";
+} from "@/lib/runtime/provider";
 import { useQuery } from "@tanstack/react-query";
 import { useCallback, useState } from "react";
 import * as z from "zod";
@@ -12,7 +12,7 @@ import {
   decideComponent,
   type GrantedComponent,
 } from "@/lib/components/queries";
-import { useActiveBotId, useDeclaredBotId } from "@/lib/copilot/active-bot";
+import { useActiveBotId, useDeclaredBotId } from "@/lib/agent/active-bot";
 import {
   type PublishedSandboxed,
   publishedSandboxedQueryOptions,

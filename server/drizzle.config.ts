@@ -24,6 +24,7 @@ export default defineConfig({
     "./src/db/schema/components.ts",
     "./src/db/schema/cloud-agents.ts",
     "./src/db/schema/plugins.ts",
+    "./src/db/schema/runtime.ts",
     "./src/db/schema/work.ts",
   ],
   out: "./drizzle",

@@ -10,28 +10,19 @@
  *
  * SILENCE ONLY MEANS ANYTHING WHILE THIS PROCESS IS WAITING TO HEAR FROM THE BOT. The Bot's stream
  * is relayed onward as it arrives, and whoever reads the relayed copy is entitled to take its time:
- * in Intelligence mode that reader is publishing every event on to the gateway over the network. A
+ * the native runtime may be publishing every event to a slow browser. A
  * chunk sitting in that handover is quiet that says nothing about the endpoint, and counting it
  * would end a run that was streaming perfectly and put the blame on a Bot for a pause on this side
  * of the wire. That is the one outcome a watchdog must never produce, so the clock is stopped for
  * the handover and started again when it completes, which is what `pause` and `resume` are for.
  *
- * WHAT THE STREAM ACTUALLY DOES IN THIS PRODUCT, measured before any of this was designed, because
- * the answer decides whether a long tool call would be reported as a stall.
- *
- * OpenBot runs in Intelligence mode and has no other mode, so `POST /api/copilotkit/agent/:id/run`
- * does not stream at all. It answers `Content-Type: application/json` with a fixed Content-Length in
- * about a second, carrying a join token, and the AG-UI events reach the browser over a WebSocket to
- * the Intelligence gateway. Wrapping that response body would watch a JSON envelope go past. The
- * stream that can actually stall is the one on the other side of this server: the Bot's own AG-UI
- * response, read here, event by event, and republished to the gateway. That is the stream this
- * watchdog is pointed at, and stall-guard.ts is where it is wrapped.
+ * The watched stream is a remote Bot's AG-UI response, read here event by event and relayed by the
+ * native runtime. `stall-guard.ts` is where it is wrapped.
  *
  * The computer tools are frontend tools, executed in the browser, and the run ENDS before the
  * browser runs one. The Bot emits TOOL_CALL_START, ARGS and END and then RUN_FINISHED, its stream
- * closes, the browser executes the tool, and the CopilotKit client opens a SECOND run carrying the
- * result. Verified in @copilotkit/core 1.67.1, whose `processAgentResult` executes frontend tools
- * only after `agent.runAgent` has resolved and then re-enters `runAgent`, and against `agent-bot` in
+ * closes, the browser executes the tool, and the native client opens a SECOND run carrying the
+ * result. This is enforced by the browser tool loop and against `agent-bot` in
  * this repository, which writes its tool calls followed by RUN_FINISHED and closes the stream.
  *
  * So no exemption for tool calls exists here, and none is needed. A browser tool that takes ten

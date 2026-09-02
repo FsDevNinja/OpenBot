@@ -1,6 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
-import { MCPMock } from "@copilotkit/aimock/mcp";
 import { and, eq } from "drizzle-orm";
 import { createAuditStore } from "../src/audit";
 import { createDatabase } from "../src/db/client";
@@ -15,6 +14,7 @@ import { createPluginStore } from "../src/plugins/store";
 import { grantedTools, REFUSAL_MARKER } from "../src/plugins/tools";
 import type { ActionPolicy } from "../src/policy/engine";
 import { TEST_POOL } from "./support/database";
+import { MCPMock } from "./support/protocol-mocks";
 
 /**
  * A tool call that happens with no browser involved.
@@ -23,10 +23,9 @@ import { TEST_POOL } from "./support/database";
  * asserted here is that the same call runs from the server and arrives at a real MCP server, and
  * that moving it did not take the grant, the policy or the audit row with it.
  *
- * The server on the other end is `@copilotkit/aimock`, ours, speaking real MCP over HTTP rather than
- * a stubbed fetch. A stub would pass whether or not we had understood the protocol; this fails if
- * the wire format moves underneath us, which is the whole promise of pointing a Bot at somebody
- * else's server.
+ * The server on the other end uses the official MCP SDK and speaks real MCP over HTTP rather than a
+ * stubbed fetch. This fails if the wire format moves underneath us, which is the whole promise of
+ * pointing a Bot at somebody else's server.
  */
 
 const database = createDatabase(

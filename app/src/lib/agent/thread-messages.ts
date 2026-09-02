@@ -246,7 +246,7 @@ export async function readThreadMessages(
 ): Promise<StoredThread> {
   try {
     const response = await tryClient(
-      `/api/copilotkit/threads/${encodeURIComponent(threadId)}/messages?agentId=${encodeURIComponent(agentId)}`,
+      `/api/runtime/threads/${encodeURIComponent(threadId)}/messages?agentId=${encodeURIComponent(agentId)}`,
     );
     if (!response.ok) return NOTHING;
     const stored = (await response.json())?.messages;

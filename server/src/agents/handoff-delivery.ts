@@ -75,7 +75,7 @@ export function createHandoffDelivery(options: {
    * The conversation so far, so the addressed Bot is not answering out of context.
    *
    * PASSED THROUGH UNTOUCHED, which is why its shape is the reader's rather than named here. The
-   * platform holds a thread's messages in its own type and takes them back in the same one; sitting
+   * runtime holds a thread's messages in its own type and takes them back in the same one; sitting
    * in the middle with a stricter type would mean inventing a conversion between two shapes that
    * already agree, and a conversion is a place to lose a message.
    */
@@ -88,17 +88,14 @@ export function createHandoffDelivery(options: {
   /**
    * A fresh thread of the addressed Bot's own, where its working happens out of sight.
    *
-   * NOT THE CONVERSATION THAT ASKED, and this is a property of the platform rather than a choice. An
-   * Intelligence thread is owned by exactly one agent: `assertThreadAgentOwnership` refuses any other
-   * one, and the managed-channel path that relaxes USER ownership still enforces agent ownership. A
-   * second Bot answering inside the first Bot's thread is not something this platform can express
-   * today, whatever the caller does.
+   * NOT THE CONVERSATION THAT ASKED. Native threads are intentionally bound to one agent, so a
+   * second Bot does its work in a scratch thread and relays the result.
    *
    * A scratch thread rather than the Bot's own channel with the person, which is where answers used
    * to land. Two conversations for one question meant the person read the answer somewhere they
    * never asked anything; now the runner relays what came back through the Bot that asked, in the
    * conversation they are actually watching, and the scratch thread is never mapped to a channel so
-   * nobody is shown it. It still exists on the platform, which is what makes the turn a recorded
+   * nobody is shown it. It still exists in PostgreSQL, which makes the turn a recorded
    * run rather than an unlogged model call.
    */
   mintThreadId: () => string;

@@ -204,6 +204,20 @@
       "when": 1788350520007,
       "tag": "0028_cute_talon",
       "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1788357590407,
+      "tag": "0029_nappy_madripoor",
+      "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1788358765344,
+      "tag": "0030_wandering_donald_blake",
+      "breakpoints": true
     }
   ]
 }

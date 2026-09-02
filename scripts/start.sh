@@ -151,8 +151,8 @@ identifies_as_openbot() {
   case "$name" in
     # A field of this server's own payload. A stray 200 does not carry it.
     server)
-      curl -fsS --max-time 3 "http://localhost:$port/api/copilotkit/info" 2>/dev/null \
-        | grep -q '"licenseStatus"'
+      curl -fsS --max-time 3 "http://localhost:$port/api/runtime/info" 2>/dev/null \
+        | grep -q '"runtime":"openbot-native"'
       ;;
     # The app is static HTML with nothing to interrogate, so its title is the identity available.
     app)
@@ -397,20 +397,14 @@ else
 fi
 
 info "3/4  Runtime health"
-INFO="$(curl -fsS --max-time 8 "http://localhost:$SERVER_PORT/api/copilotkit/info")"
+INFO="$(curl -fsS --max-time 8 "http://localhost:$SERVER_PORT/api/runtime/info")"
 python3 - "$INFO" <<'PY'
 import json, sys
 info = json.loads(sys.argv[1])
-status, agents = info.get("licenseStatus"), list(info.get("agents", {}))
-if status != "valid":
-    print(f"\033[31m  licence is '{status}', not 'valid'.\033[0m")
-    print("\033[31m  Run: npx copilotkit@latest login && npx copilotkit@latest license --write\033[0m")
-    print("\033[31m  See README.md for Intelligence setup.\033[0m")
+if info.get("runtime") != "openbot-native" or info.get("protocol") != "ag-ui":
+    print("\033[31m  native AG-UI runtime did not report ready.\033[0m")
     raise SystemExit(1)
-if agents:
-    print(f"\033[32m  licence valid · mode {info.get('mode')} · agents: {', '.join(agents)}\033[0m")
-else:
-    print(f"\033[32m  licence valid · mode {info.get('mode')} · team ready for its first agent\033[0m")
+print("\033[32m  native AG-UI runtime · PostgreSQL history ready\033[0m")
 PY
 
 info "4/4  App"

@@ -12,7 +12,7 @@ import { parseAgentInput } from "../src/agents/routes";
 import { createApp } from "../src/app";
 import type { ComputerGateway } from "../src/computer/gateway";
 import { loadConfig } from "../src/config";
-import { remoteComputerToolAliases } from "../src/copilot";
+import { remoteComputerToolAliases } from "../src/agents/runtime-registry";
 import { testEnvironment } from "./support/environment";
 
 /** A 32-byte key, as the vault expects. */

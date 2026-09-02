@@ -1,4 +1,4 @@
-import { useAgent } from "@copilotkit/react-core/v2";
+import { useAgent } from "@/lib/runtime/provider";
 import { useEffect, useState } from "react";
 
 /**

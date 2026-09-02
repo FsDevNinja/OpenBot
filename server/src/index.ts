@@ -1,8 +1,4 @@
 import { randomUUID } from "node:crypto";
-import {
-  CopilotKitIntelligence,
-  IntelligenceAgentRunner,
-} from "@copilotkit/runtime/v2";
 import { serve } from "bun";
 import { eq } from "drizzle-orm";
 import { COMPUTER_GUIDANCE } from "../../shared/bot-prompt";
@@ -67,18 +63,16 @@ import {
 import { loadConfig } from "./config";
 import {
   type IdentifyActor,
-  type IdentifyUser,
-  mountCopilotRuntime,
   resolveRuntimeAgents,
   type ToolSelection,
-} from "./copilot";
+} from "./agents/runtime-registry";
 import {
   createCredentialAdminService,
   createCredentialStore,
   resolveModelApiKey,
 } from "./credentials";
 import { createDatabase } from "./db/client";
-import { intelligenceChannelMappings } from "./db/schema";
+import { channelThreads } from "./db/schema";
 import { createOnboardingStore } from "./people/onboarding";
 import { createPeopleStore } from "./people/store";
 import { useRoutineTools } from "./plugins/builtin-routines";
@@ -88,6 +82,8 @@ import { grantedSkills, grantedTools } from "./plugins/tools";
 import { createTurnRunner } from "./routines/run-turn";
 import { createRoutineRunner } from "./routines/runner";
 import { createRoutineStore } from "./routines/store";
+import { mountNativeRuntime } from "./runtime/native-runtime";
+import { createNativeThreadStore } from "./runtime/thread-store";
 import { createIntentRouter } from "./routing/classify";
 import { createModelCompleter } from "./routing/model";
 import {
@@ -103,7 +99,7 @@ import {
 } from "./work/queue";
 
 /**
- * Who is asking, for a CopilotKit request.
+ * Who is asking, for a native runtime request.
  *
  * One resolver, because a run has two questions to answer about the same person: whose threads and
  * memory these are, and which coworkers they may run. Answering them from different places is how
@@ -120,11 +116,11 @@ async function resolveRequestActor(request: Request): Promise<{
   const session = await auth?.api.getSession({ headers: request.headers });
   const user = session?.user;
   if (!user) {
-    throw new Error("A CopilotKit run requires a signed-in user.");
+    throw new Error("A Bot run requires a signed-in user.");
   }
   const roles = await roleRepository.rolesForUser(user.id);
   if (!roles.includes("admin") && !roles.includes("user")) {
-    throw new Error("A CopilotKit run requires an authorized user.");
+    throw new Error("A Bot run requires an authorized user.");
   }
   return {
     id: user.id,
@@ -133,31 +129,9 @@ async function resolveRequestActor(request: Request): Promise<{
   };
 }
 
-/** The Intelligence projection of {@link resolveRequestActor}: threads are scoped to this person. */
-const identifyUser: IdentifyUser = async (request) => {
-  const { id, name } = await resolveRequestActor(request);
-  return { id, name };
-};
-
-/**
- * The authorization projection of the same person: agent visibility is decided from this.
- *
- * An unauthenticated request resolves to a person who owns nothing rather than an error, so the
- * runtime can still describe itself, `/info` reports the licence and the public roster, which is
- * what a deployment check reads to tell "the licence is invalid" apart from "chat is silently
- * broken". It grants nothing: this actor matches no private profile and is not an administrator,
- * and a run still fails in `identifyUser`, which has no anonymous case because a thread must belong
- * to somebody.
- */
-const ANONYMOUS_ACTOR = { id: "", role: "user" } as const;
-
 const identifyActor: IdentifyActor = async (request) => {
-  try {
-    const { id, role } = await resolveRequestActor(request);
-    return { id, role };
-  } catch {
-    return ANONYMOUS_ACTOR;
-  }
+  const { id, role } = await resolveRequestActor(request);
+  return { id, role };
 };
 
 const config = loadConfig();
@@ -173,6 +147,7 @@ if (
 }
 const port = Number.parseInt(rawPort, 10);
 const database = createDatabase(config.databaseUrl);
+const nativeThreadStore = createNativeThreadStore(database);
 await initializeDevActorUser(database, config.singleUser);
 // The vault, built before the agent store because a customer's agent may sit behind a key and that
 // key belongs here rather than on the agent row. See agents/auth-header.ts.
@@ -485,9 +460,8 @@ process.on("unhandledRejection", (reason) => {
 /**
  * The watch on Bot streams, built once and shared by every run.
  *
- * It has to outlive the request that opens a stream: the sweep that notices a silent one is still
- * running long after the run request has been answered, because in Intelligence mode that request is
- * answered in about a second and the Bot keeps writing for as long as it has something to say.
+ * It has to outlive the request that opens a stream: the Bot can keep writing for as long as it has
+ * something to say.
  *
  * The same audit store as everything else, so a Bot that hangs is recorded beside what Bots do.
  */
@@ -531,7 +505,7 @@ const chooseSkills = createModelCompleter({
 /*
  * WHY THESE ARE NAMED CONSTANTS RATHER THAN ARGUMENTS WRITTEN INLINE.
  *
- * Two callers now build a Bot: a person's chat request, through `mountCopilotRuntime` below, and a
+ * Two callers now build a Bot: a person's chat request through the native runtime, and a
  * routine's headless turn, through `buildAgentFor` further down. They have to build the SAME Bot. A
  * routine that resolved its tools, its run assertion or its endpoint dialling through a second,
  * slightly different set of collaborators would be a Bot that behaves one way when a person asks and
@@ -727,43 +701,8 @@ const buildAgentFor = async ({
   return agent;
 };
 
-/*
- * The pair a headless turn is driven through, built ONCE.
- *
- * Not the runtime's own pair: `mountCopilotRuntime` keeps its client and its runner inside
- * `CopilotRuntime` and hands neither back, and reaching into that object would be a worse seam than
- * building our own from the same three settings. Built from `config.runtime.intelligence`, which is
- * required and not optional — `RuntimeCapabilities` has exactly one mode and every Intelligence field
- * with it (`config.ts:10-22`), and `loadConfig` refuses to boot without them — so there is no
- * not-in-Intelligence-mode branch to write here. If a second mode is ever added, THIS is the line that
- * has to grow a guard, and the routine runner must then be left off `createApp` entirely.
- *
- * One runner for the process, reused across firings: it opens a socket per run and holds no idle
- * connection, but its `threads` map is per instance, and a runner per turn would fragment the
- * already-running check that keeps two turns off one thread. See `routines/run-turn.ts`.
- */
-const routineIntelligence = new CopilotKitIntelligence({
-  apiUrl: config.runtime.intelligence.apiUrl,
-  wsUrl: config.runtime.intelligence.gatewayWsUrl,
-  apiKey: config.runtime.intelligence.apiKey,
-});
-const routineAgentRunner = new IntelligenceAgentRunner({
-  url: routineIntelligence.ɵgetRunnerWsUrl(),
-  authToken: routineIntelligence.ɵgetRunnerAuthToken(),
-});
-
-const routineRunner = createRoutineRunner({
-  routineStore,
-  channelStore,
-  runTurn: createTurnRunner({
-    intelligence: routineIntelligence,
-    runner: routineAgentRunner,
-    buildAgentFor,
-  }),
-});
-
 /**
- * The runtime, and the two things beside it a hop needs.
+ * The runtime, durable thread store, and the two things beside it a headless turn needs.
  *
  * `agentFor` builds the addressed Bot exactly the way a person's run builds it, and `history` reads
  * the conversation through the same client. Taken from here rather than assembled again, because a
@@ -771,12 +710,12 @@ const routineRunner = createRoutineRunner({
  * invisible: it runs, and quietly holds different tools or a different role from the one the person
  * is talking to.
  */
-const copilotRuntime = mountCopilotRuntime(
+const nativeRuntime = mountNativeRuntime(
   config,
+  nativeThreadStore,
   tenantPackage.model,
   loadAgentsForActor,
   resolveRuntimeModelApiKey,
-  identifyUser,
   identifyActor,
   stallGuard,
   loadToolsForActor,
@@ -870,6 +809,31 @@ const copilotRuntime = mountCopilotRuntime(
   },
 );
 
+const routineRunner = createRoutineRunner({
+  routineStore,
+  channelStore,
+  runTurn: createTurnRunner({
+    threads: {
+      ensure: ({ threadId, userId, agentId }) =>
+        nativeThreadStore.ensure({ threadId, actorId: userId, agentId }),
+      history: ({ threadId, userId }) =>
+        nativeThreadStore.history({
+          threadId,
+          actorId: userId,
+        }),
+      acquire: (input) => nativeRuntime.threadLock.acquire(input),
+      renew: (input) => nativeRuntime.threadLock.renew(input),
+      release: (input) => nativeRuntime.threadLock.release(input),
+    },
+    runner: {
+      run: nativeRuntime.runner.run,
+      // `createTurnRunner` already aborts the concrete agent. There is no second gateway process.
+      stop: async () => false,
+    },
+    buildAgentFor,
+  }),
+});
+
 /**
  * Delivering hops, on every replica.
  *
@@ -929,15 +893,15 @@ if (config.handoff.maxDepth > 0 && config.handoff.maxPerRun > 0) {
             "who this is for could not be confirmed, so the Bot was not run",
           );
         }
-        return copilotRuntime.agentFor({ actor, botId });
+        return nativeRuntime.agentFor({ actor, botId });
       },
-      history: copilotRuntime.history,
-      lock: copilotRuntime.threadLock,
+      history: nativeRuntime.history,
+      lock: nativeRuntime.threadLock,
       /*
        * A scratch thread of the addressed Bot's own, one per hop.
        *
-       * An Intelligence thread has exactly one agent, so a second Bot cannot answer inside the first
-       * Bot's conversation however it asks. Its turn runs here instead, unmapped to any channel, and
+       * A native thread is bound to one agent, so a second Bot cannot answer inside the first Bot's
+       * conversation. Its turn runs here instead, unmapped to any channel, and
        * what it said comes back to the conversation that asked through the relay — in the asking
        * Bot's voice, which is the only voice that thread admits. Minted with the deployment's own
        * identity, like every thread this deployment starts.
@@ -950,9 +914,9 @@ if (config.handoff.maxDepth > 0 && config.handoff.maxPerRun > 0) {
        */
       announce: async (input) => {
         const [mapped] = await database
-          .select({ channelId: intelligenceChannelMappings.channelId })
-          .from(intelligenceChannelMappings)
-          .where(eq(intelligenceChannelMappings.threadId, input.threadId))
+          .select({ channelId: channelThreads.channelId })
+          .from(channelThreads)
+          .where(eq(channelThreads.threadId, input.threadId))
           .limit(1);
         if (!mapped) return;
         const actor = await actorFor(input.actorId).catch(() => null);
@@ -967,12 +931,7 @@ if (config.handoff.maxDepth > 0 && config.handoff.maxPerRun > 0) {
       // to its channel by the store; a scratch thread maps to none and signals nowhere.
       setBusy: (input) => channelStore.signalBusy(input.threadId, input.busy),
       newRunId: () => randomUUID(),
-      // The same address and the same token the runtime uses. Assembling either from configuration
-      // produced a runner every join was refused for, because the thread's active run is a lock the
-      // platform issues rather than something an API key can claim.
-      runner: new IntelligenceAgentRunner(
-        copilotRuntime.runnerConnection(),
-      ) as never,
+      runner: nativeRuntime.runner as never,
     }),
   });
 
@@ -1086,7 +1045,7 @@ const app = createApp(
   createPackageStatusReader(database),
   // The runtime call: the model, per-actor agent loading, and the two identity
   // functions are how a run is attributed to a person.
-  copilotRuntime.handler,
+  nativeRuntime.handler,
   // The only path to an acting call.
   computerGateway,
   policyStore,
@@ -1126,6 +1085,10 @@ const app = createApp(
   // person connects their own executor account, and every task remains owned by that person.
   cloudAgentConnectionStore,
   cloudAgentTaskService,
+  async (threadId, userId) =>
+    (await nativeThreadStore.exists({ threadId, actorId: userId }))
+      ? "known"
+      : "unknown",
 );
 
 /**

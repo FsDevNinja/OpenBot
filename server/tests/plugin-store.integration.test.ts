@@ -7,7 +7,6 @@ import {
   test,
 } from "bun:test";
 import { randomUUID } from "node:crypto";
-import { MCPMock } from "@copilotkit/aimock/mcp";
 import { and, eq, inArray, like, sql } from "drizzle-orm";
 import { createAuditStore } from "../src/audit";
 import type { ActionPolicy } from "../src/computer/policy";
@@ -43,6 +42,7 @@ import {
   unlistedAdvertisedTools,
 } from "../src/plugins/store";
 import { TEST_POOL } from "./support/database";
+import { MCPMock } from "./support/protocol-mocks";
 
 /**
  * The two questions a tool call has to pass, and the row each answer leaves behind.

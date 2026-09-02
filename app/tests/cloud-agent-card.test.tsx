@@ -6,7 +6,7 @@ import {
   type CloudAgentTaskSeed,
   CloudTaskCard,
   seedFrom,
-} from "@/lib/copilot/cloud-agent-tools";
+} from "@/lib/agent/cloud-agent-tools";
 
 beforeAll(() => GlobalRegistrator.register());
 afterEach(cleanup);

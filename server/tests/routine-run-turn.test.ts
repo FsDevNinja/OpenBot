@@ -9,12 +9,10 @@ import {
 } from "../src/routines/run-turn";
 
 /**
- * A headless turn, asserted without a gateway, without a database and without a model.
+ * A headless turn, asserted without a database and without a model.
  *
- * This file exists because `run-turn.ts` RESTATES BY HAND five `ɵ`-prefixed request shapes that
- * `@copilotkit/runtime` does not export. Nothing else in the repository can catch a lock that is
- * acquired and never released, a renew that keeps a different lock alive than the one the cleanup
- * releases, or a `persistedInputMessages` that quietly re-persists a whole transcript — and every one
+ * Nothing else in the repository can catch a lease that is acquired and never released, a renew
+ * that keeps a different lease alive, or a `persistedInputMessages` that quietly re-persists a whole transcript — and every one
  * of those is felt by a person rather than by a test: a leaked lock refuses their next browser message
  * with 409 for the whole TTL, so a routine that fails at three in the morning locks them out of their
  * own conversation.
@@ -40,17 +38,13 @@ type HistoryRow = {
   role: string;
   content?: unknown;
   activityType?: string;
-  toolCalls?: { id: string; name: string; args: string }[];
+  toolCalls?: {
+    id: string;
+    type: "function";
+    function: { name: string; arguments: string };
+  }[];
   toolCallId?: string;
 };
-
-/** A `PlatformRequestError` as `isMissingThread` matches it: the name and the status, nothing else. */
-function threadNotFound(): Error {
-  const error = new Error("THREAD_NOT_FOUND");
-  error.name = "PlatformRequestError";
-  (error as Error & { status?: number }).status = 404;
-  return error;
-}
 
 class FakeAgent extends AbstractAgent {
   aborts = 0;
@@ -130,22 +124,21 @@ function harness(options: {
   const agent = new FakeAgent({ agentId: AGENT_ID });
   const drive = options.drive ?? answers;
 
-  const intelligence = {
-    getOrCreateThread: async (params: {
+  const threads = {
+    ensure: async (params: {
       threadId: string;
       userId: string;
       agentId: string;
     }) => {
-      order.push("getOrCreateThread");
+      order.push("ensure");
       calls.threads.push(params);
-      return { thread: { id: params.threadId }, created: false };
     },
-    getThreadMessages: async () => {
-      order.push("getThreadMessages");
+    history: async () => {
+      order.push("history");
       if (options.historyFails) throw options.historyFails();
-      return { messages: options.history ?? [] };
+      return options.history ?? [];
     },
-    ɵacquireThreadLock: async (params: {
+    acquire: async (params: {
       threadId: string;
       runId: string;
       userId: string;
@@ -157,7 +150,7 @@ function harness(options: {
       calls.acquired.push(params);
       return { threadId: params.threadId, runId: params.runId, joinToken: "t" };
     },
-    ɵrenewThreadLock: async (params: {
+    renew: async (params: {
       threadId: string;
       runId: string;
       ttlSeconds: number;
@@ -166,7 +159,7 @@ function harness(options: {
       if (options.renew) return options.renew();
       return { ttlSeconds: params.ttlSeconds };
     },
-    ɵcleanupThreadLock: async (params: { threadId: string; runId: string }) => {
+    release: async (params: { threadId: string; runId: string }) => {
       order.push("cleanup");
       calls.cleaned.push(params);
     },
@@ -197,7 +190,7 @@ function harness(options: {
 
   const runTurn = createTurnRunner({
     // biome-ignore lint/suspicious/noExplicitAny: narrow structural fakes, on purpose.
-    intelligence: intelligence as any,
+    threads: threads as any,
     // biome-ignore lint/suspicious/noExplicitAny: narrow structural fakes, on purpose.
     runner: runner as any,
     buildAgentFor: async () => agent,
@@ -240,9 +233,7 @@ describe("a routine's headless turn", () => {
 
     await run();
 
-    expect(order.indexOf("getOrCreateThread")).toBeLessThan(
-      order.indexOf("acquire"),
-    );
+    expect(order.indexOf("ensure")).toBeLessThan(order.indexOf("acquire"));
     expect(order.indexOf("acquire")).toBeLessThan(order.indexOf("run"));
     expect(calls.threads).toEqual([
       { threadId: THREAD_ID, userId: OWNER, agentId: AGENT_ID },
@@ -273,7 +264,14 @@ describe("a routine's headless turn", () => {
         {
           id: "m4",
           role: "assistant",
-          toolCalls: [{ id: "call_1", name: "search", args: '{"q":"x"}' }],
+          content: "",
+          toolCalls: [
+            {
+              id: "call_1",
+              type: "function",
+              function: { name: "search", arguments: '{"q":"x"}' },
+            },
+          ],
         },
         // The result that answers `call_1`. Present because the row above is otherwise a dangling
         // call, which `sanitizeSeededHistory` drops — and what this test is about is the conversion,
@@ -310,14 +308,6 @@ describe("a routine's headless turn", () => {
     // The turn's own message carries the instruction, framed as a firing — see the describe below.
     expect(agent.messages[5]?.content).toContain(INSTRUCTION);
     expect(agent.messages[5]?.content).toContain(FRAME_MARK);
-  });
-
-  test("a thread the platform has never heard of reads as no history", async () => {
-    const { run, calls } = harness({ historyFails: threadNotFound });
-
-    await run();
-
-    expect(calls.runs[0]?.input.messages).toHaveLength(1);
   });
 });
 
@@ -414,8 +404,16 @@ describe("the seeded history is sanitized of dangling tool calls", () => {
           role: "assistant",
           content: "Looking them up.",
           toolCalls: [
-            { id: "call_answered", name: "search", args: '{"q":"x"}' },
-            { id: "call_dangling", name: "search", args: '{"q":"y"}' },
+            {
+              id: "call_answered",
+              type: "function",
+              function: { name: "search", arguments: '{"q":"x"}' },
+            },
+            {
+              id: "call_dangling",
+              type: "function",
+              function: { name: "search", arguments: '{"q":"y"}' },
+            },
           ],
         },
         {
@@ -462,7 +460,14 @@ describe("the seeded history is sanitized of dangling tool calls", () => {
         {
           id: "m2",
           role: "assistant",
-          toolCalls: [{ id: "call_dangling", name: "search", args: "{}" }],
+          content: "",
+          toolCalls: [
+            {
+              id: "call_dangling",
+              type: "function",
+              function: { name: "search", arguments: "{}" },
+            },
+          ],
         },
         { id: "m3", role: "user", content: "Anything?" },
       ],
@@ -566,7 +571,14 @@ describe("persistedInputMessages is the subtraction", () => {
         {
           id: "m4",
           role: "assistant",
-          toolCalls: [{ id: "call_dangling", name: "search", args: "{}" }],
+          content: "",
+          toolCalls: [
+            {
+              id: "call_dangling",
+              type: "function",
+              function: { name: "search", arguments: "{}" },
+            },
+          ],
         },
       ],
     });
@@ -677,7 +689,7 @@ describe("the lock is released on every exit path", () => {
 
 describe("cleanup only runs for a lock that was actually taken", () => {
   test("a rejected acquire never cleans up, renews, or starts the heartbeat", async () => {
-    // `ɵcleanupThreadLock` is DELETE on the platform's lock endpoint. If cleanup ran when the
+    // If release ran when the
     // acquire itself failed, it would delete whoever DOES hold the lock — the person's own browser
     // session, most likely. So this is not just "no cleanup call happened to be made", it is "no
     // cleanup call may ever be made when we never held anything to begin with".

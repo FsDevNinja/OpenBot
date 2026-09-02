@@ -10,17 +10,7 @@ cp .env.example .env
 bun install
 ```
 
-Provision CopilotKit Intelligence after `.env` exists:
-
-```sh
-npx --yes copilotkit@latest login
-npx --yes copilotkit@latest project select
-npx --yes copilotkit@latest license --write
-```
-
-Put the `cpk-...` runtime key from `project select` in `.env` as
-`INTELLIGENCE_API_KEY`. `license --write` writes `COPILOTKIT_LICENSE_TOKEN`.
-Then add `OPENAI_API_KEY`. To let each person connect a ChatGPT account through Codex instead, set
+Add `OPENAI_API_KEY`. To let each person connect a ChatGPT account through Codex instead, set
 `CODEX_AGENT_ENABLED=true` and `AGENT_ENDPOINT_ALLOWED_HOSTS=localhost:4202`; see
 [the Codex provider guide](../agent-codex/README.md).
 

@@ -26,7 +26,7 @@ import {
   channelListQueryOptions,
   channelQueryOptions,
 } from "@/lib/channels/queries";
-import { onComputerActivity } from "@/lib/copilot/computer-activity";
+import { onComputerActivity } from "@/lib/agent/computer-activity";
 
 const chatSearchSchema = z.object({
   settings: z.boolean().optional(),
@@ -299,7 +299,7 @@ function ChannelBody({
     );
   }
 
-  // Remount on channel changes so CopilotKit agent/thread state cannot leak between channels.
+  // Remount on channel changes so agent/thread state cannot leak between channels.
   return (
     <ChannelChat
       channel={channel}

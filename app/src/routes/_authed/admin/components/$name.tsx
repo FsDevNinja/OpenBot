@@ -59,7 +59,7 @@ import {
   type DataFunctionSummary,
   dataFunctionsQueryOptions,
 } from "@/lib/components/queries";
-import { RENDERABLE_NAMES } from "@/lib/copilot/gallery-registry";
+import { RENDERABLE_NAMES } from "@/lib/agent/gallery-registry";
 import { queryClient } from "@/query-client";
 
 /**

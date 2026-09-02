@@ -1,4 +1,4 @@
-import { useFrontendTool } from "@copilotkit/react-core/v2";
+import { useFrontendTool } from "@/lib/runtime/provider";
 import { z } from "zod";
 import { ToolLine } from "@/components/channels/tool-line";
 import { CommandOutput } from "@/components/computer/command-output";

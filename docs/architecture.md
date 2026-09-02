@@ -1,10 +1,10 @@
 # Architecture
 
-OpenBot combines a React app, a Hono API server, PostgreSQL, CopilotKit Intelligence, AG-UI Bot endpoints, and governed graphical computers.
+OpenBot combines a React app, a native Hono/AG-UI runtime, PostgreSQL, provider-backed Bot endpoints, and governed graphical computers.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="../assets/architecture-dark.svg">
-  <img src="../assets/architecture-light.svg" alt="A turn goes from the app to the server, which sends it to a Bot over AG-UI. Every tool call the Bot makes returns through the gateway, which resolves the target, decides it against the configured policy, records an audit row, and only then acts, or refuses and names the rule. Allowed actions reach that Bot's own computer, one container each holding its own Chromium, logins and workspace, created by the supervisor. Every decision lands in PostgreSQL; threads and memory live in CopilotKit Intelligence.">
+  <img src="../assets/architecture-light.svg" alt="A turn goes from the app to OpenBot's native AG-UI runtime, which sends it to a Bot. Every tool call returns through the gateway for policy and audit. Allowed actions reach that Bot's own computer. Product data, threads, runs, and transcripts live in PostgreSQL.">
 </picture>
 
 Regenerate it with `bun run diagram` after changing anything it shows.
@@ -14,14 +14,13 @@ Regenerate it with `bun run diagram` after changing anything it shows.
 | Component                | Port                       | Responsibility                                                                                                                              |
 | ------------------------ | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
 | `app`                    | 3010                       | React/Vite interface for channels, Bot chat, live screen, settings, and admin pages.                                                        |
-| `server`                 | 3001                       | API, CopilotKit runtime, auth, roles, tenant package, coworkers, channels, policy, audit, credentials, plugins, components, and connectors. |
+| `server`                 | 3001                       | API, native AG-UI runtime, auth, roles, tenant package, coworkers, channels, thread/run persistence, policy, audit, credentials, plugins, components, and connectors. |
 | `agent-computer`         | 4100                       | A Linux desktop, Chromium, terminal, `/workspace`, browser profile, screenshots, snapshots, and file tools.                                 |
 | `agent-bot`              | 4200                       | Proof-of-concept AG-UI Bot.                                                                                                                     |
 | `agent-langgraph`        | 4201                       | LangGraph AG-UI Bot.                                                                                                                        |
 | `agent-codex`            | 4202                       | Optional host-side AG-UI adapter with an isolated Codex app-server OAuth account per user connection.                                      |
 | `supervisor`             | 4500 host / 4300 container | Creates, stops, resets, and lists per-Bot computer containers.                                                                              |
-| PostgreSQL with pgvector | 5432                       | Product data, audit rows, credentials, policy, grants, channels, and components.                                           |
-| CopilotKit Intelligence  | external                   | Durable threads, memory, and realtime gateway.                                                                                              |
+| PostgreSQL with pgvector | 5432                       | Product data, durable threads and runs, transcripts, audit rows, credentials, policy, grants, channels, and components.                     |
 
 `scripts/start.sh` starts PostgreSQL, `agent-computer`, and the supervisor through Docker Compose,
 then starts `server` and `app` on the host. It normally starts `agent-bot` and `agent-langgraph` in
@@ -34,10 +33,10 @@ The compose file also defines optional SPIRE services. `start.sh` does not start
 
 1. The app opens a channel or direct Bot session.
 2. The server resolves the signed-in actor and selected coworker.
-3. CopilotKit runtime sends the turn to the configured AG-UI endpoint.
+3. The native runtime resolves the provider-backed Bot and runs it over AG-UI (or calls the configured model directly for a built-in Bot).
 4. The surface registers available frontend tools: browser tools, MCP tools, and components granted to that Bot.
 5. Acting browser/file/MCP calls return to the server for authorization and audit.
-6. The server streams results back to the app and Intelligence thread.
+6. The server streams results back to the app and commits the transcript and run result to PostgreSQL.
 
 ## Browser action governance
 
@@ -118,7 +117,8 @@ A coworker is a durable Bot profile:
   deletion state.
 - `agent_preferences` stores per-user roster state.
 
-A channel is a conversation with one coworker and a CopilotKit Intelligence thread mapping. Starting a new channel creates a new thread.
+A channel is a conversation that references a native runtime thread through `channel_threads`.
+Starting a new channel creates a new thread; the runtime itself does not point back at channels.
 
 A person's optional custom avatar lives on their `users` row. Both person and Bot images are served
 from authenticated, private, versioned routes; list responses carry those short URLs and never the
@@ -192,10 +192,10 @@ Four things are decided by the deployment and never by the model:
 The second Bot runs as the same person, with its own role and its own grants, so it sees what that
 person may see and no more.
 
-**The answer lands in that Bot's own conversation with the person.** Not the conversation that asked,
-and this is a property of the platform rather than a choice: an Intelligence thread is owned by
-exactly one agent. So the conversation that asked says where the work went, and the one that answers
-moves to the top of the roster with an unread mark. The person gets both halves.
+**The addressed Bot works in a scratch thread.** Native threads are bound to one agent, so the
+second Bot cannot write directly into the first Bot's thread. Its result is relayed back through the
+asking Bot into the conversation the person is already watching; the scratch thread is durable but
+has no channel mapping.
 
 What the answering conversation keeps is one line saying who asked and what for, not the envelope.
 Those are two texts with two readers: the model needs the task, the constraints and the shape of a

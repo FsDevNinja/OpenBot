@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { AGUIMock } from "@copilotkit/aimock/agui";
 import { testAgentConnection } from "../src/agents/connection-test";
+import { AGUIMock } from "./support/protocol-mocks";
 
 /**
  * The connection test, against something that really speaks AG-UI.
@@ -10,11 +10,6 @@ import { testAgentConnection } from "../src/agents/connection-test";
  * pass if AG-UI changed its wire format underneath us, or if we had misread it in the first place.
  * The whole promise is that somebody else's agent works if it speaks this protocol, so the
  * test that matters is one where an implementation we did not write answers.
- *
- * `@copilotkit/aimock` is ours, which is the point: it is the org's deterministic backend for
- * exactly this, it tracks the protocol as the protocol moves, and using it here means OpenBot finds
- * out about a drift in the same week as everything else that depends on it rather than in a
- * customer's integration.
  *
  * Deterministic and offline. No key, no network, no spend, and the same answer on every run, so
  * this belongs in CI, which is where an agent-facing contract most needs watching.

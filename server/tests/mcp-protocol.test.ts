@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { MCPMock } from "@copilotkit/aimock/mcp";
 import { callTool, listTools } from "../src/plugins/mcp";
+import { MCPMock } from "./support/protocol-mocks";
 
 /**
  * The one door in this deployment that speaks MCP to somebody else's server, against something that
@@ -13,10 +13,8 @@ import { callTool, listTools } from "../src/plugins/mcp";
  *
  * None of that was tested. A stubbed fetch would prove we parse what we already believe the protocol
  * says, and every one of these would still pass if MCP changed underneath us or if we had misread it
- * in the first place. `@copilotkit/aimock` is ours, it is the org's deterministic backend for exactly
- * this, and it tracks the protocol as the protocol moves: using it here means OpenBot finds out about
- * a drift in the same week as everything else that depends on it, rather than in a customer's
- * integration.
+ * in the first place. The fixture server uses the official MCP SDK, so the test still exercises the
+ * actual transport contract rather than a hand-written JSON response.
  *
  * Offline and deterministic. No key, no network, no spend, same answer every run, which is what lets
  * it live in CI where a protocol contract most needs watching.

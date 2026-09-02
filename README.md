@@ -47,14 +47,13 @@ A Bot is any endpoint speaking [AG-UI](https://github.com/ag-ui-protocol/ag-ui),
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/architecture-dark.svg">
-  <img src="assets/architecture-light.svg" alt="You talk to the server, which sends the turn to a Bot over AG-UI. Every tool call the Bot makes comes back through the gateway, which resolves the target, decides it against your policy, records an audit row, and only then acts, or refuses and names the rule. Allowed browser and file actions reach that Bot's own computer, one container each with its own Chromium, logins and workspace, built by the supervisor. Decisions land in PostgreSQL and threads in CopilotKit Intelligence.">
+  <img src="assets/architecture-light.svg" alt="You talk to OpenBot's native AG-UI runtime, which sends the turn to a Bot. Every tool call returns through the gateway for policy and audit. Allowed browser and file actions reach that Bot's own computer. Product data, threads, runs, and transcripts live in PostgreSQL.">
 </picture>
 
 ## Requirements
 
 - Docker, for PostgreSQL and the shipped Bots.
 - [Bun](https://bun.sh) 1.3+, for the app and API server.
-- A CopilotKit Intelligence project and license. A free plan is available, and Intelligence can be self-hosted.
 - Either a model key, or the installed Codex CLI with `CODEX_AGENT_ENABLED=true`. The proof-of-concept Bot uses OpenAI; the LangGraph Bot can use OpenAI, Anthropic, or Google; in Codex mode each person authorizes their own ChatGPT account from Settings.
 
 ## Quick start
@@ -70,19 +69,7 @@ A Bot is any endpoint speaking [AG-UI](https://github.com/ag-ui-protocol/ag-ui),
    cp .env.example .env
    ```
 
-2. Get CopilotKit Intelligence credentials:
-
-   ```sh
-   npx --yes copilotkit@latest login
-   npx --yes copilotkit@latest project select
-   npx --yes copilotkit@latest license --write
-   ```
-
-   Put the `cpk-...` runtime key from `project select` in `.env` as
-   `INTELLIGENCE_API_KEY`. `license --write` writes
-   `COPILOTKIT_LICENSE_TOKEN` into the existing `.env`.
-
-3. Fill the remaining required values:
+2. Fill the remaining required values:
 
    - `OPENAI_API_KEY`
 
@@ -91,13 +78,13 @@ A Bot is any endpoint speaking [AG-UI](https://github.com/ag-ui-protocol/ag-ui),
    `AGENT_ENDPOINT_ALLOWED_HOSTS=localhost:4202`. See
    [agent-codex/README.md](agent-codex/README.md).
 
-   Keep the managed Intelligence URLs from `.env.example` unless you run Intelligence yourself. The example `KEY_ENCRYPTION_KEY` is public and fine locally; generate your own with:
+   The example `KEY_ENCRYPTION_KEY` is public and fine locally; generate your own with:
 
    ```sh
    openssl rand -base64 32
    ```
 
-4. Install and run:
+3. Install and run:
 
    ```sh
    bun install
@@ -170,7 +157,7 @@ Leave `EMBEDDED_POSTGRES` off and set `DATABASE_URL` to point at a database you 
 - **An audit trail you can read**: `/admin/audit` lists what was permitted, what was refused and what failed, and every refusal carries the rule that caused it.
 - **Credentials encrypted at rest**: stored through `/admin/credentials`, never returned by an API, and redacted from audit events.
 - **Loopback by default**: computers bind to `127.0.0.1` and require a per-container token, so nothing reaches a logged-in browser by knowing its port. The supervisor binds there too, because it holds the Docker socket and its token is a shared secret rather than a network boundary.
-- **Durable threads and memory**: conversations survive restarts through CopilotKit Intelligence, and each deployment stamps the threads it owns.
+- **Native durable threads**: PostgreSQL stores transcripts, run outcomes, and cross-replica leases; each deployment stamps the thread ids it owns.
 - **Routines**: ask a Bot to do something on a schedule and it does, running as you, in the channel you asked in. A 15-minute floor and a cap of 20 enabled routines keep a sentence from scheduling more than a person meant, and ten failures in a row switch a routine off rather than burn model spend forever. Needs a worker process; see [docs/routines.md](docs/routines.md).
 
 ## Bring your own agent
@@ -209,10 +196,6 @@ See [docs/configuration.md](docs/configuration.md) and [docs/coworkers.md](docs/
 
 - `DATABASE_URL`
 - `KEY_ENCRYPTION_KEY`
-- `INTELLIGENCE_API_URL`
-- `INTELLIGENCE_GATEWAY_WS_URL`
-- `INTELLIGENCE_API_KEY`
-- `COPILOTKIT_LICENSE_TOKEN`
 
 Settings worth knowing:
 
@@ -233,7 +216,7 @@ Settings worth knowing:
 | `AGENT_COMPUTER_ALLOW_PRIVATE_HOSTS` | Lets a Bot reach this machine's own services. Local only, and refused under `NODE_ENV=production`. |
 | `AGENT_ENDPOINT_ALLOWED_HOSTS`       | Private addresses an agent may be registered at, comma separated. A host, optionally with a port. |
 | `TENANT_PACKAGE_DIR`                 | Directory containing tenant YAML. Defaults to `../examples/fintech`.      |
-| `DEPLOYMENT_ID`                      | Names this deployment when two share one Intelligence project.            |
+| `DEPLOYMENT_ID`                      | Names this deployment in the thread ids it mints.                          |
 
 Full reference: [docs/configuration.md](docs/configuration.md).
 
@@ -242,14 +225,13 @@ Full reference: [docs/configuration.md](docs/configuration.md).
 | Service                  | Port                       | Purpose                                                                                          |
 | ------------------------ | -------------------------- | ------------------------------------------------------------------------------------------------ |
 | `app`                    | 3010                       | React/Vite UI.                                                                                   |
-| `server`                 | 3001                       | Hono API, CopilotKit runtime, auth, policy, audit, plugins, components, coworkers, and channels. |
+| `server`                 | 3001                       | Hono API, native AG-UI runtime, auth, thread/run persistence, policy, audit, plugins, components, coworkers, and channels. |
 | `agent-computer`         | 4100                       | Linux desktop, Chromium, terminal, `/workspace`, and browser profile.                            |
 | `agent-bot`              | 4200                       | Proof-of-concept AG-UI Bot.                                                                          |
 | `agent-langgraph`        | 4201                       | LangGraph AG-UI Bot.                                                                             |
 | `agent-codex`            | 4202                       | Optional host-side Codex AG-UI adapter using the local ChatGPT login.                            |
 | `supervisor`             | 4500 host / 4300 container | Creates and manages one computer per Bot.                                                        |
-| PostgreSQL with pgvector | 5432                       | Product data, policy, audit, credentials, grants, channels, and component metadata.              |
-| CopilotKit Intelligence  | external                   | Durable threads and memory.                                                                      |
+| PostgreSQL with pgvector | 5432                       | Product data, threads, runs, transcripts, policy, audit, credentials, grants, channels, and component metadata. |
 
 The server gateway is the product/API path for Bot browser and file tool calls.
 It resolves the target, evaluates policy, writes an audit row, and then calls

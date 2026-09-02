@@ -1,4 +1,4 @@
-import { GALLERY_COMPONENTS } from "@/lib/copilot/gallery-registry";
+import { GALLERY_COMPONENTS } from "@/lib/agent/gallery-registry";
 
 /**
  * The answers a Bot can give, drawn rather than described.

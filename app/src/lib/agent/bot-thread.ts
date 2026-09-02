@@ -5,19 +5,18 @@ import { newId } from "../new-id";
 /**
  * The thread the direct Bot chat talks in.
  *
- * Two things it has to be. Minted by this deployment, so the conversation says where it came from
- * in a project that may hold more than one. And the same one tomorrow, because a chat that takes a
+ * Two things it has to be. Minted by this deployment, so the id carries its origin. And the same one tomorrow, because a chat that takes a
  * new thread on every load has no history to come back to.
  *
  * Kept per Bot: the chat is bound to one Bot at a time, and two Bots sharing a thread would read
  * each other's conversation.
  *
  * "Tomorrow" is a promise this module cannot keep on its own, though. The id survives in
- * `localStorage` forever, but Intelligence is free to forget the thread behind it — expiry,
- * environment reset, a wiped dev database. Remembering an id nobody upstream recognises does not
+ * `localStorage` forever, but PostgreSQL may no longer hold the thread after an environment reset or
+ * wiped dev database. Remembering an id storage no longer recognises does not
  * fail loudly: every send just opens a new, empty thread under the old id, and the chat answers as
  * if nothing had ever been said, with no error on screen to explain why. So before this hook hands
- * out a remembered id, it asks Intelligence whether that id still means something, and only keeps
+ * out a remembered id, it asks the native store whether that id still means something, and only keeps
  * pretending the history is there when the answer says it is.
  */
 
@@ -57,7 +56,7 @@ async function mint(): Promise<string | null> {
 }
 
 /**
- * Whether Intelligence still has a remembered thread, and whether the question could even be put
+ * Whether the native store still has a remembered thread, and whether the question could be put
  * to it. Those are separate facts: a 404 on this route means no reader is configured on this
  * deployment at all, which says nothing about the thread and must not be read as bad news, while a
  * 400 or a 502 (or the request simply throwing) means the question was asked and failed to get a
@@ -78,7 +77,7 @@ async function checkKnown(
     }
     if (!response.ok) {
       // A 400 means the remembered id was not even a plausible thread id; a 502 means the check
-      // itself failed to reach Intelligence. Either way there is no clean answer, and the safer
+      // itself failed to reach the store. Either way there is no clean answer, and the safer
       // read is "unknown" rather than "gone" — see threadToUse for why.
       return { known: undefined, unavailable: true };
     }
@@ -96,7 +95,7 @@ async function checkKnown(
 /**
  * Whether to keep the remembered thread id or start over, given what the check above learned.
  *
- * The two ways of not keeping it are not the same mistake. `known: false` is Intelligence saying,
+ * The two ways of not keeping it are not the same mistake. `known: false` is PostgreSQL saying,
  * plainly, that it has never heard of this id — replacing it loses nothing, because there was
  * never anything there to lose, and keeping it would only mean sending every message into a thread
  * that quietly reopens empty. `known: undefined` is the opposite kind of ignorance: the check
@@ -174,7 +173,7 @@ export function useBotThread(agentId: string): BotThread {
     const existing = remembered(agentId);
     if (!existing) {
       // Nothing remembered means nothing the check could protect — minting straight away is both
-      // faster and exactly as safe as asking Intelligence about an id that was never assigned.
+      // faster and exactly as safe as asking storage about an id that was never assigned.
       adoptFresh();
     } else {
       void checkKnown(existing).then((outcome) => {

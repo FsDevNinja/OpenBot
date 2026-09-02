@@ -48,7 +48,7 @@ if (!workerSharedSecret) {
 /*
  * Read from the environment rather than from `DeploymentConfig`/`loadConfig`, and deliberately so.
  *
- * `loadConfig` demands the whole server deployment's configuration — Intelligence credentials, key
+ * `loadConfig` demands the whole server deployment's configuration — encryption key
  * encryption, auth — because it answers "what can this deployment do". This process is handed exactly
  * three settings by `scripts/start.sh` (`DATABASE_URL`, `SERVER_INTERNAL_URL`,
  * `WORKER_SHARED_SECRET`); calling `loadConfig(process.env)` here would refuse to start over

@@ -2,8 +2,8 @@ import type { Message } from "@ag-ui/core";
 import {
   UseAgentUpdate,
   useAgent,
-  useCopilotKit,
-} from "@copilotkit/react-core/v2";
+  useOpenBotRuntime,
+} from "@/lib/runtime/provider";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toAgentOptions } from "@/components/channels/composer";
@@ -23,16 +23,16 @@ import {
   type ChannelSummary,
   channelKeys,
 } from "@/lib/channels/queries";
-import { useActiveBot } from "@/lib/copilot/active-bot";
-import { ConversationProvider } from "@/lib/copilot/conversation";
-import { afterMs, joinWithin } from "@/lib/copilot/join-thread";
-import { repairUnansweredToolCalls } from "@/lib/copilot/repair-history";
-import { stoppedReason } from "@/lib/copilot/stopped-turn";
+import { useActiveBot } from "@/lib/agent/active-bot";
+import { ConversationProvider } from "@/lib/agent/conversation";
+import { afterMs, joinWithin } from "@/lib/agent/join-thread";
+import { repairUnansweredToolCalls } from "@/lib/agent/repair-history";
+import { stoppedReason } from "@/lib/agent/stopped-turn";
 import {
   mergeStoredMessages,
   readThreadMessages,
   restoreThreadMessages,
-} from "@/lib/copilot/thread-messages";
+} from "@/lib/agent/thread-messages";
 import { useSkillCommands } from "@/lib/plugins/skill-commands";
 import { queryClient } from "@/query-client";
 import { newId } from "../../lib/new-id";
@@ -40,7 +40,7 @@ import { newId } from "../../lib/new-id";
 /**
  * How long a stalled thread join is worth waiting for before it is ended.
  *
- * Ended, not outrun. See `lib/copilot/join-thread.ts` for what a connect left in flight does to the
+ * Ended, not outrun. See `lib/agent/join-thread.ts` for what a connect left in flight does to the
  * next message sent.
  */
 const JOIN_DEADLINE_MS = 1500;
@@ -64,7 +64,7 @@ export function ChannelChat({
   runtimeAgentId: string;
 }) {
   // The core attaches the frontend tool registry; direct agent runs do not.
-  const { copilotkit } = useCopilotKit();
+  const { runtime } = useOpenBotRuntime();
   // Mentions are scoped to the channel's permitted agents.
   const { data: agentProfiles } = useQuery(agentListQueryOptions());
   const { agent, isReady } = useAgent({
@@ -148,7 +148,7 @@ export function ChannelChat({
       try {
         // Bounded, and finished when it returns; `join-thread.ts` has why that matters.
         await joinWithin({
-          connect: copilotkit.connectAgent({ agent }),
+          connect: runtime.connectAgent(),
           deadline: afterMs(JOIN_DEADLINE_MS),
           detach: () => agent.detachActiveRun(),
         });
@@ -199,7 +199,7 @@ export function ChannelChat({
     return () => {
       current = false;
     };
-  }, [copilotkit, agent, isReady, channel.threadId, runtimeAgentId]);
+  }, [runtime, agent, isReady, channel.threadId, runtimeAgentId]);
 
   /*
    * A turn nobody here streamed, surfaced while the channel is open.
@@ -283,7 +283,7 @@ export function ChannelChat({
    * what decides whether the next thing typed is sent or parked, and what tells the queue its wait
    * is over.
    *
-   * `runsInFlight` counts what Stop can actually reach: the run `copilotkit.runAgent` opens, and
+   * `runsInFlight` counts what Stop can actually reach: the run the native runtime opens, and
    * nothing before it. A turn can be in flight for a second and a half before that, while `say`
    * waits for the runtime agent, and a Stop drawn in that window aborts a controller nobody has
    * made yet.
@@ -387,7 +387,7 @@ export function ChannelChat({
 
     setRunsInFlight((count) => count + 1);
     try {
-      await copilotkit.runAgent({ agent: target });
+      await runtime.runAgent({ agent: target });
     } finally {
       setRunsInFlight((count) => count - 1);
     }
@@ -539,7 +539,7 @@ export function ChannelChat({
          */
         onStop={() => {
           awaitingReply.current = false;
-          copilotkit.stopAgent({ agent });
+          runtime.stopAgent({ agent });
         }}
         /*
          * The turn, not the run. A browser action ends one run and starts another, and telling the

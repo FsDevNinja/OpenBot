@@ -18,7 +18,7 @@ import type { AppVariables, AuthenticatedActor } from "./guards";
  * deployment refuses to start unless somebody wrote down that they meant it.
  *
  * The actor is an administrator so admin surfaces can be reached too, and its id is fixed so
- * Intelligence threads and memory stay attached to the same person across restarts.
+ * Native threads and stored provider connections stay attached to the same person across restarts.
  */
 
 export const DEV_ACTOR: AuthenticatedActor = {

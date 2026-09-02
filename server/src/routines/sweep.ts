@@ -64,7 +64,7 @@ export const DEFAULT_GRACE_MS = 10 * 60_000;
  * "running now" for a run no process is running. Twice the server's own turn timeout
  * (`DEFAULT_TURN_TIMEOUT_MS` in `./run-turn`, five minutes), so a slow-but-alive turn is never
  * closed out from under the server still running it. A local constant rather than an import because
- * the sweep runs as a CronJob and must not drag the runtime's import graph — the Intelligence
+ * the sweep runs as a CronJob and must not drag the runtime's import graph — the native runtime
  * client and everything behind it — into that process.
  */
 const ABANDONED_RUN_MS = 10 * 60_000;

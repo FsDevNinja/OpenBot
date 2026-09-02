@@ -15,7 +15,7 @@ import {
   channels,
   credentialKind,
   credentials,
-  intelligenceChannelMappings,
+  channelThreads,
   mcpUserCredentials,
   sessions,
   userRoles,
@@ -38,7 +38,7 @@ describe("OpenBot database schema", () => {
         channelAgents,
         credentials,
         auditEvents,
-        intelligenceChannelMappings,
+        channelThreads,
       ].map(getTableName),
     ).toEqual([
       "users",
@@ -52,7 +52,7 @@ describe("OpenBot database schema", () => {
       "channel_agents",
       "credentials",
       "audit_events",
-      "intelligence_channel_mappings",
+      "channel_threads",
     ]);
   });
 

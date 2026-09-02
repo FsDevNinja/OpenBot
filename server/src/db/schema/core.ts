@@ -286,7 +286,7 @@ export const channels = pgTable(
       },
     ),
     /**
-     * When this channel was deleted, or null. Soft: the row, the transcript, and the Intelligence
+     * When this channel was deleted, or null. Soft: the row and native transcript
      * thread stay intact, and every read path filters on this instead. Channel grain, because
      * deleting is for everyone — per-member hiding would be a membership fact instead.
      */
@@ -423,8 +423,8 @@ export const auditEvents = pgTable(
   ],
 );
 
-export const intelligenceChannelMappings = pgTable(
-  "intelligence_channel_mappings",
+export const channelThreads = pgTable(
+  "channel_threads",
   {
     userId: text("user_id")
       .notNull()
@@ -438,6 +438,6 @@ export const intelligenceChannelMappings = pgTable(
   },
   (table) => [
     primaryKey({ columns: [table.userId, table.channelId] }),
-    uniqueIndex("intelligence_channel_mappings_thread_idx").on(table.threadId),
+    uniqueIndex("channel_threads_thread_idx").on(table.threadId),
   ],
 );

@@ -27,8 +27,10 @@ import { avatarResponse, avatarUrl, parseAvatarImage } from "./avatar";
 import type { ChannelEventHub } from "./channels/events";
 import { type ChannelStore, createChannelRoutes } from "./channels/routes";
 import type { ThreadIdentity } from "./channels/thread-identity";
-import { createThreadRoutes } from "./channels/thread-routes";
-import { createThreadReader } from "./channels/thread-status";
+import {
+  createThreadRoutes,
+  type ThreadReader,
+} from "./channels/thread-routes";
 import { createCloudAgentConnectionRoutes } from "./cloud-agents/connection-routes";
 import type { CloudAgentConnectionStore } from "./cloud-agents/connections";
 import type { CloudAgentTaskService } from "./cloud-agents/service";
@@ -47,7 +49,6 @@ import type { PolicyStore } from "./computer/policy-store";
 import { createComputerRoutes } from "./computer/routes";
 import { configuredAuthProviders, type DeploymentConfig } from "./config";
 import type { CredentialAdminService, CredentialInput } from "./credentials";
-import { createIntelligenceClient } from "./intelligence-client";
 import type { OnboardingStore } from "./people/onboarding";
 import type { PeopleStore } from "./people/store";
 import { createPluginRoutes } from "./plugins/routes";
@@ -244,13 +245,13 @@ export function createApp(
   credentialService?: CredentialAdminService,
   packageStatusReader?: PackageStatusReader,
   /**
-   * The CopilotKit endpoint, already built by the caller.
+   * The native AG-UI endpoint, already built by the caller.
    *
    * Passed in rather than constructed here so this module never imports the runtime. The runtime
    * pulls in `eventsource`, which Bun cannot `require()` from a test, so importing it at module
-   * scope broke every server test that touches createApp even though none of them use CopilotKit.
+   * scope broke every server test that touches createApp even though none of them run an agent.
    */
-  copilotHandler?: HonoApp,
+  runtimeHandler?: HonoApp,
   /** The single governed computer module: policy, audit trail, transport, and provider lifecycle. */
   computerGateway?: ComputerGateway,
   /** What the gateway enforces, and what an administrator can change while running. */
@@ -317,7 +318,7 @@ export function createApp(
   /**
    * Chooses which coworker an untagged message is for, before a channel is pinned to one.
    *
-   * Passed in already built, like the copilot handler, so this module never imports the model
+   * Passed in already built, like the runtime handler, so this module never imports the model
    * client. Absent leaves the composer's existing behaviour untouched: an untagged message goes to
    * the default coworker, which is exactly the failsafe the router itself falls back to.
    */
@@ -371,13 +372,13 @@ export function createApp(
   cloudAgentConnections?: CloudAgentConnectionStore,
   /** Durable external development tasks, always scoped back to their owning person. */
   cloudAgentTasks?: CloudAgentTaskService,
+  /** Whether a remembered native thread still exists for this person. */
+  threadReader?: ThreadReader,
 ) {
   const app = new Hono<{ Variables: AppVariables }>();
 
   app.get("/health", (context) => context.json({ status: "ok" }));
-  // Projected, never the raw runtime. config.runtime carries the Intelligence contract, including
-  // INTELLIGENCE_API_KEY and the licence token, and this endpoint is reachable by anyone. Returning
-  // the object wholesale would serve deployment secrets to the browser. Add fields here explicitly.
+  // Projected explicitly so adding internal runtime configuration never exposes it by accident.
   app.get("/api/capabilities", async (context) =>
     context.json({
       mode: config.runtime.mode,
@@ -985,15 +986,8 @@ export function createApp(
       return context.json({ accepted: true }, 202);
     });
   }
-  // The CopilotKit runtime, behind the same session guard as every other API route. Mounted last so
-  // its own routing under /api/copilotkit cannot shadow an OpenBot route declared above.
-  if (copilotHandler) {
-    // Mounted at the ROOT with the handler carrying its own basePath. Mounting it at
-    // "/api/copilotkit" as well double-prefixes it: Hono strips the prefix before the handler sees
-    // the path, so every route lands at /api/copilotkit/api/copilotkit/* and /info 404s. The browser
-    // reports that as "Runtime info request failed with status 404" and every run fails before it
-    // starts, with nothing at all in the server log.
-    app.route("/", copilotHandler);
+  if (runtimeHandler) {
+    app.route("/", runtimeHandler);
   }
 
   /**
@@ -1333,18 +1327,7 @@ export function createApp(
   if (threadIdentity) {
     app.route(
       "/api/threads",
-      createThreadRoutes(
-        threadIdentity,
-        requireUser,
-        // config.ts refuses to boot without the full Intelligence contract (see copilot.ts's
-        // header comment), so `config.runtime.intelligence` is never missing here. Built from it
-        // rather than assumed, though: this is the one place besides the runtime mount itself that
-        // needs to reach Intelligence, and it should keep working unmodified if that guarantee ever
-        // loosens and a deployment can legitimately have no reader to build.
-        createThreadReader(
-          createIntelligenceClient(config.runtime.intelligence),
-        ),
-      ),
+      createThreadRoutes(threadIdentity, requireUser, threadReader),
     );
   }
 

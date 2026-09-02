@@ -1,4 +1,4 @@
-import type { RuntimeModel } from "../copilot";
+import type { RuntimeModel } from "../agents/runtime-registry";
 
 /**
  * The one model call the router makes, kept apart from the routing logic so that logic stays a pure

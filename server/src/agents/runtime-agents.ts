@@ -4,7 +4,10 @@ import {
   PROVIDER_CREDENTIAL_HEADER,
   PROVIDER_TYPE_HEADER,
 } from "../../../shared/agent-authorisation";
-import { type RegisteredAgent, registeredAgentFromRow } from "../copilot";
+import {
+  type RegisteredAgent,
+  registeredAgentFromRow,
+} from "../agents/runtime-registry";
 import type { CredentialSecretReader } from "../credentials";
 import type { Database } from "../db/client";
 import {
@@ -154,7 +157,7 @@ function selectActiveAgents(database: Database, actor: AgentActor) {
 /**
  * Deleted coworkers the caller still has history with.
  *
- * Registered so Intelligence can restore the thread the person is reading. Membership of a channel
+ * Resolvable so the native runtime can restore the thread the person is reading. Membership of a channel
  * the agent worked in is what authorizes this, not the profile's visibility, which is why deleting
  * a coworker leaves its conversations readable instead of erasing them.
  */

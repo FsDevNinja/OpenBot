@@ -1,6 +1,6 @@
 import { describe, expect, spyOn, test } from "bun:test";
 import { HttpAgent } from "@ag-ui/client";
-import { BuiltInAgent } from "@copilotkit/runtime/v2";
+import { BuiltInAgent } from "../src/runtime/built-in-agent";
 import { PROVENANCE_GUIDANCE } from "../../shared/bot-prompt";
 import {
   buildAgents,
@@ -9,7 +9,7 @@ import {
   registeredAgentFromRow,
   resolveRuntimeAgents,
   standingRoleMessage,
-} from "../src/copilot";
+} from "../src/agents/runtime-registry";
 import { grantedToolGuidance } from "../src/plugins/tools";
 
 // Every agent row now joins its profile, so the row a coworker is built from always names it.
@@ -28,7 +28,7 @@ const riskRow = {
   roleDescription: "Investigate policies and controls.",
 };
 
-describe("registered Copilot agents", () => {
+describe("registered runtime agents", () => {
   test("normalizes built-in and remote rows", () => {
     expect(
       registeredAgentFromRow({
@@ -526,7 +526,7 @@ describe("standing agent roles", () => {
       async () => null,
     );
 
-    const request = new Request("http://openbot.test/api/copilotkit");
+    const request = new Request("http://openbot.test/api/runtime");
     const resolved = await factory({ request });
 
     expect(seen.request).toBe(request);
@@ -544,7 +544,7 @@ describe("standing agent roles", () => {
       { provider: "openai", defaultModel: "gpt-5.6-terra" },
       async () => null,
     );
-    const request = new Request("http://openbot.test/api/copilotkit");
+    const request = new Request("http://openbot.test/api/runtime");
 
     const before = await factory({ request });
     roleDescription = "Reconcile corporate card statements.";

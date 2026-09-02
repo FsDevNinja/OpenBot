@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { galleryComponent } from "@/lib/copilot/gallery-registry";
+import { galleryComponent } from "@/lib/agent/gallery-registry";
 
 /**
  * The width a gallery component is given to lay out against, standing in for the conversation

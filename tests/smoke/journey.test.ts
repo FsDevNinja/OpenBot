@@ -59,19 +59,21 @@ describe.skipIf(!asked)("a deployment that is up", () => {
     const capabilities = await json<{ mode: string; durableHistory: boolean }>(
       "/api/capabilities",
     );
-    expect(capabilities.mode).toBe("intelligence");
+    expect(capabilities.mode).toBe("native");
     expect(capabilities.durableHistory).toBe(true);
   });
 
-  test("holds a licence the runtime accepts, and has Bots registered", async () => {
-    // A licence the runtime refuses leaves the product running and quietly degraded, which is worth
-    // failing a smoke test over.
+  test("serves the native AG-UI runtime", async () => {
     const info = await json<{
-      licenseStatus: string;
-      agents: Record<string, unknown>;
-    }>("/api/copilotkit/info");
-    expect(info.licenseStatus).toBe("valid");
-    expect(Object.keys(info.agents).length).toBeGreaterThan(0);
+      runtime: string;
+      protocol: string;
+      durableHistory: boolean;
+    }>("/api/runtime/info");
+    expect(info).toEqual({
+      runtime: "openbot-native",
+      protocol: "ag-ui",
+      durableHistory: true,
+    });
   });
 
   test("mints thread ids that say which deployment they came from", async () => {

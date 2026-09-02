@@ -1,10 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { botThreadKey, threadToUse } from "../src/lib/copilot/bot-thread";
+import { botThreadKey, threadToUse } from "../src/lib/agent/bot-thread";
 
 /**
  * The two decisions `useBotThread` makes that do not need a browser to test: which localStorage
  * key belongs to which Bot, and whether a remembered thread id is still safe to use once
- * Intelligence has said whether it knows about it.
+ * the native thread store has said whether it knows about it.
  */
 
 describe("botThreadKey", () => {
@@ -26,17 +26,17 @@ describe("botThreadKey", () => {
 });
 
 describe("threadToUse", () => {
-  test("a remembered thread Intelligence confirms it has is kept", () => {
+  test("a remembered thread the native store confirms is kept", () => {
     expect(threadToUse({ remembered: "t1", known: true })).toBe("remembered");
   });
 
-  test("a remembered thread Intelligence says it does not have is replaced", () => {
+  test("a remembered thread the native store does not have is replaced", () => {
     expect(threadToUse({ remembered: "t1", known: false })).toBe("fresh");
   });
 
   test("a remembered thread is kept when the check itself could not be completed", () => {
     // known: undefined means the lookup failed, not that the thread is gone. Discarding a
-    // perfectly good thread id because Intelligence was briefly unreachable would be worse than
+    // perfectly good thread id because PostgreSQL was briefly unreachable would be worse than
     // the failure it was reacting to.
     expect(threadToUse({ remembered: "t1", known: undefined })).toBe(
       "remembered",

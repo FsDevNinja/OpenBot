@@ -7,13 +7,13 @@ import { AGENT_PROVIDER_CATALOG } from "../src/agents/providers";
 import { createRuntimeAgentLoader } from "../src/agents/runtime-agents";
 import { createChannelStore } from "../src/channels/routes";
 import { createThreadIdentity } from "../src/channels/thread-identity";
-import { standingRoleMessage } from "../src/copilot";
+import { standingRoleMessage } from "../src/agents/runtime-registry";
 import { createDatabase } from "../src/db/client";
 import {
   agentProfiles,
   agents,
   channels,
-  intelligenceChannelMappings,
+  channelThreads,
   users,
 } from "../src/db/schema";
 import { TEST_POOL } from "./support/database";
@@ -43,8 +43,8 @@ const createdChannelIds: string[] = [];
 afterEach(async () => {
   for (const channelId of createdChannelIds.splice(0)) {
     await database
-      .delete(intelligenceChannelMappings)
-      .where(eq(intelligenceChannelMappings.channelId, channelId));
+      .delete(channelThreads)
+      .where(eq(channelThreads.channelId, channelId));
     await database.delete(channels).where(eq(channels.id, channelId));
   }
   for (const agentId of createdAgentIds.splice(0)) {

@@ -1,4 +1,4 @@
-import type { useFrontendTool } from "@copilotkit/react-core/v2";
+import type { useFrontendTool } from "@/lib/runtime/provider";
 import type { ReactElement } from "react";
 
 /**

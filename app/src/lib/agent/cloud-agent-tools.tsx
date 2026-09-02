@@ -1,4 +1,4 @@
-import { useRenderTool } from "@copilotkit/react-core/v2";
+import { useRenderTool } from "@/lib/runtime/provider";
 import {
   IconAlertTriangle,
   IconBan,

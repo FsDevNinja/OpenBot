@@ -505,14 +505,11 @@ function clip(answer: string): string {
 /**
  * The same failure, in words that can be said out loud.
  *
- * The reason on a failed hop is whatever threw, and one of the things that throws is the platform
- * client, whose message is `Intelligence platform error 409: {"error":{...}}` — a response body,
- * verbatim. That reason is interpolated into the notice a Bot then paraphrases to a person, so an
- * internal error envelope ends up in somebody's chat. The trail keeps the whole thing; the sentence
- * gets the shape of the problem.
+ * The reason on a failed hop is whatever threw. Keep long internal response envelopes in the audit
+ * trail rather than interpolating them into a notice a Bot paraphrases to a person.
  */
 function forThePerson(reason: string): string {
-  const platform = reason.match(/^Intelligence platform error (\d{3})\b/);
+  const platform = reason.match(/^Native runtime error (\d{3})\b/);
   if (platform) {
     return `the platform answered ${platform[1]} (the full response is in the trail)`;
   }

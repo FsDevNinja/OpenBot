@@ -25,7 +25,7 @@ import {
   channelAgents,
   channelMemberships,
   channels,
-  intelligenceChannelMappings,
+  channelThreads,
 } from "../db/schema";
 import {
   CHANNEL_ACTIVITY_TOPIC,
@@ -295,7 +295,7 @@ export function createChannelStore(
     await transaction
       .insert(channelAgents)
       .values(agentIds.map((agentId) => ({ channelId: id, agentId })));
-    await transaction.insert(intelligenceChannelMappings).values({
+    await transaction.insert(channelThreads).values({
       userId: actor.id,
       channelId: id,
       threadId,
@@ -383,7 +383,7 @@ export function createChannelStore(
           id: channels.id,
           name: channels.name,
           agentId: channelAgents.agentId,
-          threadId: intelligenceChannelMappings.threadId,
+          threadId: channelThreads.threadId,
           deletedAt: agentProfiles.deletedAt,
         })
         .from(channels)
@@ -395,10 +395,10 @@ export function createChannelStore(
           ),
         )
         .innerJoin(
-          intelligenceChannelMappings,
+          channelThreads,
           and(
-            eq(intelligenceChannelMappings.channelId, channels.id),
-            eq(intelligenceChannelMappings.userId, actor.id),
+            eq(channelThreads.channelId, channels.id),
+            eq(channelThreads.userId, actor.id),
           ),
         )
         .innerJoin(channelAgents, eq(channelAgents.channelId, channels.id))
@@ -483,7 +483,7 @@ export function createChannelStore(
           agentId: channelAgents.agentId,
           hasAvatarImage: sql<boolean>`${agentProfiles.avatarImage} is not null`,
           avatarUpdatedAt: agentProfiles.updatedAt,
-          threadId: intelligenceChannelMappings.threadId,
+          threadId: channelThreads.threadId,
           deletedAt: agentProfiles.deletedAt,
           lastMessage: channels.lastMessage,
           lastMessageAt: channels.lastMessageAt,
@@ -501,10 +501,10 @@ export function createChannelStore(
           ),
         )
         .innerJoin(
-          intelligenceChannelMappings,
+          channelThreads,
           and(
-            eq(intelligenceChannelMappings.channelId, channels.id),
-            eq(intelligenceChannelMappings.userId, actor.id),
+            eq(channelThreads.channelId, channels.id),
+            eq(channelThreads.userId, actor.id),
           ),
         )
         .innerJoin(channelAgents, eq(channelAgents.channelId, channels.id))
@@ -794,9 +794,9 @@ export function createChannelStore(
       // The channel this thread is shown in, if any. A scratch thread maps to nothing, so a hop
       // running there signals nowhere and the branch below returns without announcing.
       const [mapped] = await database
-        .select({ channelId: intelligenceChannelMappings.channelId })
-        .from(intelligenceChannelMappings)
-        .where(eq(intelligenceChannelMappings.threadId, threadId))
+        .select({ channelId: channelThreads.channelId })
+        .from(channelThreads)
+        .where(eq(channelThreads.threadId, threadId))
         .limit(1);
       if (!mapped) return;
 

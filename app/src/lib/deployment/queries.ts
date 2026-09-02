@@ -5,7 +5,7 @@ import { client } from "@/lib/client";
  * What this deployment can do, as the server is willing to say it.
  *
  * A projection, not the runtime. `/api/capabilities` is reachable before anybody has signed in, so
- * only fields somebody may know unauthenticated appear on it; the Intelligence contract and every
+ * only fields somebody may know unauthenticated appear on it; provider contracts and every
  * deployment secret stay on the server. See server/src/app.ts.
  */
 export type DeploymentCapabilities = {

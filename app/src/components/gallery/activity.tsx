@@ -2,9 +2,9 @@ import { useEffect, useState } from "react";
 import { z } from "zod";
 import { Button } from "@/components/ui/button";
 import { callComponentFunction } from "@/lib/components/queries";
-import { useActiveBotId } from "@/lib/copilot/active-bot";
-import { useConversation } from "@/lib/copilot/conversation";
-import type { GalleryComponent } from "@/lib/copilot/gallery-registry";
+import { useActiveBotId } from "@/lib/agent/active-bot";
+import { useConversation } from "@/lib/agent/conversation";
+import type { GalleryComponent } from "@/lib/agent/gallery-registry";
 import { GalleryFrame } from "./frame";
 import { seriesColour } from "./palette";
 

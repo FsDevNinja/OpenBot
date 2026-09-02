@@ -1,52 +1,9 @@
 /**
- * One headless turn, run into the Intelligence thread the person will open.
+ * One headless turn into the same native thread a person opens in a channel.
  *
- * WRITTEN AGAINST `@copilotkit/runtime` 1.69.0, MIRRORING
- * `node_modules/@copilotkit/runtime/dist/v2/runtime/core/channel-manager.mjs:189-316`
- * (`runCanonicalChannelAgent`, the package's own module-private headless-turn engine) and
- * `dist/v2/runtime/handlers/intelligence/run.mjs:114-127` for `persistedInputMessages`. That engine is
- * not exported, so this is a hand copy of it with one addition — `getOrCreateThread` first — and it
- * has to be re-read against the package whenever the runtime is upgraded.
- *
- * WHY NOT A SECOND MOUNTED HANDLER. A loopback that mounts a second `mountCopilotRuntime` and POSTs
- * to its own run route is viable on identity grounds: `identifyUser` and `identifyActor` are both
- * injectable there (`copilot.ts:915-916`), so a routine's request could assert its owner without a
- * header. It was rejected on information, not on identity. The run route answers at gateway-JOIN
- * rather than at completion (`run.mjs:229-247` returns `{threadId, runId, joinToken, realtime}` as
- * soon as the runner has joined), so a caller learns that a turn STARTED and nothing else: no
- * completion signal, no reply text, and no failure. Recovering either would need a second transport —
- * a websocket back into the gateway — which is strictly more moving parts for strictly less
- * information than driving the runner in-process.
- *
- * WHAT WE ARE REACHING INTO. Five `ɵ`-prefixed methods: `ɵgetRunnerWsUrl` and `ɵgetRunnerAuthToken`
- * (at wiring time, in `index.ts`), and `ɵacquireThreadLock`, `ɵrenewThreadLock`,
- * `ɵcleanupThreadLock` here. They typecheck today and are how the package's own handlers do this, but
- * the `ɵ` prefix is the package saying it may change them without a major. Their request and response
- * interfaces — `AcquireThreadLockRequest`, `RenewThreadLockRequest`, `CleanupThreadLockRequest` — are
- * declared in `dist/v2/runtime/intelligence-platform/client.d.mts:339-367` and are NOT exported from
- * `@copilotkit/runtime/v2`, so the shapes in `IntelligenceLike` below are RESTATED BY HAND. Nothing
- * fails loudly when the package changes them: a renamed field would typecheck against our own
- * restatement and be silently dropped on the wire. That is what the test file is for.
- *
- * THE LOCK LIFECYCLE IS NOW OURS TO KEEP CORRECT. In the browser path the runtime holds the lock and
- * releases it; here we do. A bug in it is not a failed routine, it is a thread the person cannot chat
- * in — see the `finally` block, which is the single most important thing in this file.
- *
- * GATEWAY AVAILABILITY IS NOW ON THE CRON RUN'S CRITICAL PATH. Driving the runner means the turn goes
- * through the Intelligence gateway's Phoenix channel: it can answer `CHANNEL_JOIN_ERROR` or time out
- * joining (`runner/intelligence.mjs:194-229`), and events must be durably acknowledged within
- * `EVENT_DURABILITY_DEADLINE_MS = 60_000` (`intelligence.mjs:16, 505-511`) or the run fails. So a
- * routine firing during an Intelligence incident fails HERE, where a turn that only called the model
- * and never persisted anything would have succeeded. That trade was made deliberately: a reply nobody
- * can find in the channel is not a reply, and the transcript is the whole point of a routine.
- *
- * WHY A SECOND RUNNER INSTANCE IS SAFE. The thread lock is a platform resource, not a process one —
- * `POST /api/threads/:id/lock`, Redis-backed, keyed by thread — so a lock taken by this runner is seen
- * by the runtime's runner and by every other replica. `IntelligenceAgentRunner.threads` is a local
- * fast path (`intelligence.mjs:105`, "Thread already running") and nothing else, which is why the
- * runner is built ONCE at wiring time and reused: one instance per turn would fragment that map, and
- * two concurrent turns on one thread would then race past the local check and collide at the platform
- * lock instead of failing cheaply here.
+ * Routines drive the in-process AG-UI runner directly so completion, reply text, and failures are
+ * observable. PostgreSQL owns both transcript durability and the cross-replica lease. The lock is
+ * acquired here because a routine has no browser request for the HTTP runtime to acquire it around.
  */
 import type {
   AbstractAgent,
@@ -56,14 +13,13 @@ import type {
   ToolCall,
 } from "@ag-ui/client";
 import { EventType } from "@ag-ui/client";
-import { historyOrEmpty } from "../copilot";
 import type { TurnRunner } from "./runner";
 
 /**
  * The gap between stopping a turn and giving up on it.
  *
  * `abortRun` on `RunSelectedAgent` reaches the agent the run turned into, and that agent does not
- * exist until `build()` resolves (`copilot.ts:649, 664-673`): during that window the wrapper has no
+ * exist until `build()` resolves (`agents/runtime-registry.ts`): during that window the wrapper has no
  * `inner`, so abort is a no-op and the deadline cannot actually stop anything. This is the backstop
  * that settles the promise anyway, so a firing cannot hang for ever on a build that never finishes.
  *
@@ -77,62 +33,32 @@ const DEFAULT_TURN_TIMEOUT_MS = 5 * 60_000;
 /**
  * The lock TTL and how often it is renewed.
  *
- * The same relationship the runtime's own handler uses: renew comfortably inside the TTL so one slow
- * request does not drop a lock we still hold. The TTL matters to a person: while it is held, their
- * browser's next message is refused with 409 "Thread lock denied" (`run.mjs:91`), so a lock leaked by
- * a failed routine locks them out of their own conversation for exactly this long.
+ * Renew comfortably inside the TTL so one slow request does not drop a lock we still hold.
  */
 const DEFAULT_LOCK_TTL_SECONDS = 20;
 const DEFAULT_HEARTBEAT_MS = 15_000;
 
-/**
- * One row of Intelligence history, as `ThreadMessagesResponse` declares it
- * (`client.d.mts:280-302`). Restated because it is not exported.
- */
-type ThreadHistoryMessage = {
-  id: string;
-  role: string;
-  content?: unknown;
-  activityType?: string;
-  toolCalls?: { id: string; name: string; args: string }[];
-  toolCallId?: string;
-};
-
-/**
- * The platform client, named by the methods this file calls and nothing else.
- *
- * Narrow and structural on purpose. It is what lets the tests drive every exit path without a
- * gateway, and it is the honest documentation of how much of `CopilotKitIntelligence` a headless turn
- * depends on. The real client satisfies it; see the seam note above about the `ɵ` shapes being
- * restatements rather than imports.
- */
-export type IntelligenceLike = {
-  getOrCreateThread(params: {
+/** The native thread operations a headless turn needs. */
+export type ThreadRuntime = {
+  ensure(params: {
     threadId: string;
     userId: string;
     agentId: string;
-  }): Promise<unknown>;
-  getThreadMessages(params: {
-    threadId: string;
-    userId: string;
-  }): Promise<{ messages: ThreadHistoryMessage[] }>;
-  ɵacquireThreadLock(params: {
+  }): Promise<void>;
+  history(params: { threadId: string; userId: string }): Promise<Message[]>;
+  acquire(params: {
     threadId: string;
     runId: string;
     userId: string;
     agentId: string;
     ttlSeconds?: number;
   }): Promise<unknown>;
-  /** NOTE: no `userId` and no `agentId` — renew is identified by the thread and the run alone. */
-  ɵrenewThreadLock(params: {
+  renew(params: {
     threadId: string;
     runId: string;
     ttlSeconds: number;
   }): Promise<unknown>;
-  ɵcleanupThreadLock(params: {
-    threadId: string;
-    runId: string;
-  }): Promise<void>;
+  release(params: { threadId: string; runId: string }): Promise<void>;
 };
 
 /**
@@ -147,7 +73,7 @@ type EventStream = {
   }): unknown;
 };
 
-/** The `IntelligenceAgentRunner`, named by the two methods this file calls. */
+/** The in-process AG-UI runner, named by the two methods this file calls. */
 export type RunnerLike = {
   run(request: {
     threadId: string;
@@ -160,41 +86,6 @@ export type RunnerLike = {
     runId?: string;
   }): Promise<boolean | undefined>;
 };
-
-/**
- * Convert one canonical Intelligence row into an AG-UI message.
- *
- * The shape at `channel-manager.mjs:337-353`, minus the managed-asset hydration that only a Slack or
- * Teams attachment needs. `content ?? ""` because the platform omits content on a tool-call-only
- * assistant row and AG-UI requires the field; `toolCalls` are re-nested into AG-UI's
- * `{ id, type: "function", function: { name, arguments } }`; `toolCallId` is carried so a tool result
- * in history still points at the call it answers.
- *
- * Rows with `role: "activity"` are seeded as they are. `prepareRunAgentInput` filters them out of the
- * input it hands the agent (`@ag-ui/client` 0.0.57), so there is no filter to write here.
- *
- * Cast at the end because the platform types `role` as `string` and `content` as `unknown`, while
- * `Message` is a union discriminated on `role`. There is nothing to narrow against at this boundary:
- * the platform is the authority on its own history.
- */
-function toAgentMessage(message: ThreadHistoryMessage): Message {
-  return {
-    id: message.id,
-    role: message.role,
-    content: message.content ?? "",
-    ...(message.activityType ? { activityType: message.activityType } : {}),
-    ...(message.toolCalls
-      ? {
-          toolCalls: message.toolCalls.map((call) => ({
-            id: call.id,
-            type: "function",
-            function: { name: call.name, arguments: call.args },
-          })),
-        }
-      : {}),
-    ...(message.toolCallId ? { toolCallId: message.toolCallId } : {}),
-  } as Message;
-}
 
 /** Whether a message said nothing at all — no text, no parts, nothing to show a person. */
 function isSilent(message: Message): boolean {
@@ -210,7 +101,7 @@ function isSilent(message: Message): boolean {
  *
  * FOUND IN PRODUCTION. Two firings of one routine, fifteen minutes apart, both failed with
  * `Tool result is missing for tool call call_TTbiXzJVNifQt8ioU1JJmj4S.` — the SAME call id both
- * times, so it did not come from the live turn: the channel's Intelligence thread held an assistant
+ * times, so it did not come from the live turn: the channel's stored thread held an assistant
  * message carrying a tool call whose result message never landed, because an earlier CHAT turn was
  * interrupted mid-call. The seeding below hands the whole converted history to the runner, the model
  * provider validates call/result pairing, and it rejects the conversation. One historical dangle
@@ -345,7 +236,7 @@ export function frameFiring(instruction: string): string {
 }
 
 export function createTurnRunner(options: {
-  intelligence: IntelligenceLike;
+  threads: ThreadRuntime;
   runner: RunnerLike;
   /** The owner's coworkers, resolved as the owner. Built per turn, keyed by registry id. */
   buildAgentFor: (input: {
@@ -360,7 +251,7 @@ export function createTurnRunner(options: {
   abortGraceMs?: number;
 }): TurnRunner {
   const {
-    intelligence,
+    threads,
     runner,
     buildAgentFor,
     turnTimeoutMs = DEFAULT_TURN_TIMEOUT_MS,
@@ -373,25 +264,15 @@ export function createTurnRunner(options: {
     /*
      * One id for this turn, minted once.
      *
-     * The same value goes to the lock acquire, to every renew, to `runner.stop`, and to the cleanup.
-     * `ɵacquireThreadLock` does echo back a canonical `threadId` and `runId` — and the Channels path
-     * adopts them, because a Slack thread id is not a platform one — but ours already IS the canonical
-     * pair: the thread was just created through `getOrCreateThread` below, and the run id is minted
-     * here and nowhere else. Re-minting or re-reading it is how a renew keeps a different lock alive
-     * than the one the cleanup releases.
+     * The same value goes to acquire, renew, stop, and release. Re-minting it is how a renew keeps a
+     * different lease alive than the one release clears.
      */
     const runId = crypto.randomUUID();
 
     /*
-     * THE ONE ADDITION over `runCanonicalChannelAgent`.
-     *
-     * A routine may be the very first thing to touch this (person, channel) thread. In the browser
-     * path the thread is created by the first message anybody sends; here there is no browser, and
-     * every call below — history, the lock, the run — is about a thread the platform has never heard
-     * of. `getOrCreateThread` is public API, idempotent, and already handles the 409 create-race
-     * (`client.d.mts:603-621`), so it is safe on the thousandth firing as well as the first.
+     * A routine may be the first thing to touch this thread, so ensure it before reading history.
      */
-    await intelligence.getOrCreateThread({
+    await threads.ensure({
       threadId,
       userId: ownerUserId,
       agentId,
@@ -400,21 +281,14 @@ export function createTurnRunner(options: {
     /*
      * History, seeded by us because nobody else will.
      *
-     * The browser path takes history from the request body (`handle-run.mjs:44`) and the Channels path
-     * loads its own; a headless turn has neither, so a routine that did not do this would ask its Bot
-     * the same question every night with no memory of the last answer. `historyOrEmpty` is the
-     * 404-on-a-fresh-thread case: `getOrCreateThread` above makes that rare, not impossible, since a
-     * concurrent delete is still a thing that can happen between the two calls.
+     * A headless turn has no browser request carrying history, so it loads the native transcript.
      *
      * And sanitized on the way in — see {@link sanitizeSeededHistory}, which is the difference
      * between a routine that survives one interrupted chat turn and one that never fires again.
      */
-    const history = await historyOrEmpty(
-      () => intelligence.getThreadMessages({ threadId, userId: ownerUserId }),
-      { messages: [] as ThreadHistoryMessage[] },
-    );
+    const history = await threads.history({ threadId, userId: ownerUserId });
 
-    const seeded = sanitizeSeededHistory(history.messages.map(toAgentMessage));
+    const seeded = sanitizeSeededHistory(history);
     /*
      * This turn's own message — and the ONLY message that is framed. See {@link frameFiring} for the
      * firing it did nothing on. The seeded history above is untouched, which is what keeps a previous
@@ -430,12 +304,10 @@ export function createTurnRunner(options: {
     /*
      * WHAT THIS RUN IS ALLOWED TO PERSIST, and it is mandatory.
      *
-     * `run.mjs:117-127`: the set subtraction on ids, not on positions. The runner defaults it to the
-     * WHOLE input (`intelligence.mjs:283`), so omitting it re-persists every message in the thread on
-     * every firing — a transcript that doubles in size every night until the person's channel is
-     * unreadable.
+     * Set subtraction is by id, not position, so a firing persists only its new input rather than
+     * doubling the transcript on every schedule.
      */
-    const historicIds = new Set(history.messages.map((message) => message.id));
+    const historicIds = new Set(history.map((message) => message.id));
     const persistedInputMessages = messages.filter(
       (message) => !historicIds.has(message.id),
     );
@@ -443,15 +315,7 @@ export function createTurnRunner(options: {
     /*
      * The Bot, resolved as its owner, and pointed at this thread.
      *
-     * `threadId` and the messages are assigned ON THE AGENT because that is where the runner reads
-     * them from: it calls `agent.runAgent(input, …)` (`intelligence.mjs:309`) and `runAgent` rebuilds
-     * its own `RunAgentInput` from `this.threadId`, `this.messages` and `this.state` through
-     * `prepareRunAgentInput`, taking only `runId`, `tools`, `context` and `forwardedProps` from what
-     * is passed. So an input object alone would run the right id against an empty conversation.
-     *
-     * `agent.run` is never called from here. The runner owns the run: it is what stamps canonical
-     * ownership on every event and pushes them to the gateway, which is the whole reason this file
-     * exists rather than a bare `runAgent`.
+     * The agent owns its thread and message state; the runner adds the durable run lifecycle.
      */
     const agent = await buildAgentFor({ ownerUserId, agentId });
     agent.threadId = threadId;
@@ -470,9 +334,8 @@ export function createTurnRunner(options: {
     };
 
     /*
-     * The reply is recovered by diffing the agent, because the runner throws away what `runAgent`
-     * returns (`intelligence.mjs:309` awaits it and discards the `RunAgentResult`), so `newMessages`
-     * is unreachable from out here. This is the before-picture.
+     * The reply is recovered by diffing the agent because the observable carries events rather than
+     * the `RunAgentResult`. This is the before-picture.
      */
     const before = new Set(agent.messages.map((message) => message.id));
     const chunks: string[] = [];
@@ -482,7 +345,7 @@ export function createTurnRunner(options: {
       },
     });
 
-    await intelligence.ɵacquireThreadLock({
+    await threads.acquire({
       threadId,
       runId,
       userId: ownerUserId,
@@ -526,8 +389,8 @@ export function createTurnRunner(options: {
     };
 
     heartbeat = setInterval(() => {
-      void intelligence
-        .ɵrenewThreadLock({ threadId, runId, ttlSeconds: lockTtlSeconds })
+      void threads
+        .renew({ threadId, runId, ttlSeconds: lockTtlSeconds })
         .catch((error: unknown) => {
           if (heartbeat === undefined) return;
           /*
@@ -550,9 +413,8 @@ export function createTurnRunner(options: {
           .run({ threadId, agent, input, persistedInputMessages })
           .subscribe({
             /*
-             * RUN_ERROR THROUGH `next` IS TERMINAL. The Intelligence runner reports a failed run by
-             * emitting RUN_ERROR and then COMPLETING the observable (`intelligence.mjs:317-340`) —
-             * `error` is only for a socket or durability failure. A RUN_ERROR not caught here would
+             * RUN_ERROR THROUGH `next` IS TERMINAL. An agent reports a failed run by emitting
+             * RUN_ERROR and then completing; `error` is for transport or durability. A RUN_ERROR not caught here would
              * therefore arrive as a successful completion, and the turn would look like a Bot that
              * answered with nothing.
              */
@@ -605,9 +467,7 @@ export function createTurnRunner(options: {
       if (deadline !== undefined) clearTimeout(deadline);
       if (backstop !== undefined) clearTimeout(backstop);
       spoken.unsubscribe();
-      await intelligence
-        .ɵcleanupThreadLock({ threadId, runId })
-        .catch(() => undefined);
+      await threads.release({ threadId, runId }).catch(() => undefined);
     }
 
     // Raised after the lock is released, and ahead of any reply: a turn that lost its lock partway

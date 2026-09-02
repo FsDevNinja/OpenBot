@@ -321,7 +321,7 @@ function render(t: Theme): string {
     weight: 700,
     fill: t.ink,
   });
-  text(svX + 22, svY + 58, "CopilotKit runtime, auth, roles, coworkers", {
+  text(svX + 22, svY + 58, "native AG-UI runtime, auth, roles, coworkers", {
     size: 13,
     fill: t.muted,
   });
@@ -412,7 +412,7 @@ function render(t: Theme): string {
   // ---- stores, along the bottom -----------------------------------------
   const dbX = 372;
   const dbY = 660;
-  box(dbX, dbY, 226, 118, t, { stroke: t.ink });
+  box(dbX, dbY, 476, 118, t, { stroke: t.ink });
   text(dbX + 18, dbY + 32, "PostgreSQL :5432", {
     size: 14.5,
     weight: 650,
@@ -421,23 +421,11 @@ function render(t: Theme): string {
   lines(
     dbX + 18,
     dbY + 58,
-    ["the audit trail", "policy, grants", "credentials, encrypted"],
-    t,
-    12.5,
-    19,
-  );
-
-  const intX = 622;
-  box(intX, dbY, 226, 118, t, { stroke: t.ink });
-  text(intX + 18, dbY + 32, "CopilotKit Intelligence", {
-    size: 14.5,
-    weight: 650,
-    fill: t.ink,
-  });
-  lines(
-    intX + 18,
-    dbY + 58,
-    ["durable threads", "memory", "external service"],
+    [
+      "threads, runs, transcripts",
+      "audit, policy, grants",
+      "credentials, encrypted",
+    ],
     t,
     12.5,
     19,
@@ -510,8 +498,8 @@ function render(t: Theme): string {
   });
   label(gX + 72, (svY + svH + dbY) / 2 + 4, "always", t.gate, "end");
 
-  // threads and memory, both ways
-  arrow(intX + 113, svY + svH + 8, intX + 113, dbY - 8, {
+  // product data and durable runtime state, both ways
+  arrow(dbX + 238, svY + svH + 8, dbX + 238, dbY - 8, {
     colour: t.ink,
     dashed: true,
     tailHead: true,
@@ -531,8 +519,8 @@ function render(t: Theme): string {
       `the Bot makes returns through the gateway, which resolves the target, decides it against the ` +
       `configured policy, records an audit row, and only then acts, or refuses and names the rule. ` +
       `Allowed actions reach that Bot's own computer, one container each holding its own Chromium, ` +
-      `logins and workspace, created by the supervisor. Every decision lands in PostgreSQL; threads ` +
-      `and memory live in CopilotKit Intelligence.</desc>`,
+      `logins and workspace, created by the supervisor. Product data, threads, runs, transcripts, ` +
+      `policy and audit all live in PostgreSQL.</desc>`,
     ...out,
     `</svg>`,
   ].join("\n");
