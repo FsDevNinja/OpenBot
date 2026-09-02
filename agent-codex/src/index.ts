@@ -2,8 +2,12 @@ import type { BaseEvent, RunAgentInput } from "@ag-ui/core";
 import { EventEncoder } from "@ag-ui/encoder";
 import { mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
-import { hasManagedAgentToken } from "../../shared/agent-authorisation";
-import { CodexAppServerClient } from "./codex-client";
+import {
+  hasManagedAgentToken,
+  providerConnectionFrom,
+  providerTypeFrom,
+} from "../../shared/agent-authorisation";
+import { CodexConnectionManager } from "./connections";
 import { recoveredThreadPrompt, toCodexTurnInput } from "./history";
 import { CodexThreadStore } from "./thread-store";
 import {
@@ -36,21 +40,25 @@ const WORKSPACE = resolve(
 const STATE_PATH = resolve(
   process.env.CODEX_AGENT_STATE?.trim() || ".openbot-codex/threads.json",
 );
+const AUTH_ROOT = resolve(
+  process.env.CODEX_AGENT_AUTH_ROOT?.trim() || ".openbot-codex/accounts",
+);
 const TOOL_URL =
   process.env.OPENBOT_TOOL_URL?.trim() ||
   "http://localhost:3001/api/agent-tools/call";
 await mkdir(WORKSPACE, { recursive: true });
+await mkdir(AUTH_ROOT, { recursive: true, mode: 0o700 });
 
 const threadStore = await CodexThreadStore.open(STATE_PATH);
 const gateway = new OpenBotToolGateway({ url: TOOL_URL, token: TOOL_TOKEN });
-const codex = new CodexAppServerClient();
-await codex.start();
+const connections = new CodexConnectionManager(AUTH_ROOT, WORKSPACE);
 
 const threadQueues = new Map<string, Promise<void>>();
 
 async function runAgent(
   input: RunAgentInput,
   requestSignal: AbortSignal,
+  connectionId: string,
 ): Promise<Response> {
   const encoder = new EventEncoder();
   const stream = new ReadableStream<Uint8Array>({
@@ -76,7 +84,9 @@ async function runAgent(
       };
 
       try {
-        await serialiseThread(input.threadId, async () => {
+        const ownedThreadId = `${connectionId}:${input.threadId}`;
+        await serialiseThread(ownedThreadId, async () => {
+          const codex = await connections.authenticatedClient(connectionId);
           const turn = toCodexTurnInput(input);
           const dynamicTools = dynamicToolsOf(input);
           const toolCatalogue = toolCatalogueFingerprint(dynamicTools);
@@ -84,11 +94,11 @@ async function runAgent(
             dynamicTools.map((tool) => tool.name),
           );
           const runAssertion = runAssertionOf(input);
-          let codexThreadId = threadStore.get(input.threadId);
+          let codexThreadId = threadStore.get(ownedThreadId);
           let prompt = turn.prompt;
           if (
             codexThreadId &&
-            threadStore.catalogue(input.threadId) === toolCatalogue
+            threadStore.catalogue(ownedThreadId) === toolCatalogue
           ) {
             await codex.resumeThread(
               codexThreadId,
@@ -105,7 +115,7 @@ async function runAgent(
             // Persist before the first turn. A crash can orphan an empty Codex thread, but it can
             // never produce conversation state that OpenBot subsequently forgets how to resume.
             await threadStore.remember(
-              input.threadId,
+              ownedThreadId,
               codexThreadId,
               toolCatalogue,
             );
@@ -236,29 +246,107 @@ Bun.serve({
   async fetch(request) {
     const url = new URL(request.url);
     if (url.pathname === "/health") {
-      const account = codex.accountSummary();
       return Response.json({
         status: "ok",
-        authMode: account.authMode,
-        planType: account.planType,
         safety: "openbot-governed-tools",
+        authentication: "per-user-oauth",
+        activeConnections: connections.size,
         threadRecovery: "persistent",
         persistedThreads: threadStore.size(),
       });
+    }
+
+    if (url.pathname.startsWith("/auth/")) {
+      if (!hasManagedAgentToken(request, MANAGED_AGENT_TOKEN)) {
+        return Response.json({ error: "Unauthorized." }, { status: 401 });
+      }
+      try {
+        if (url.pathname === "/auth/login/start" && request.method === "POST") {
+          const body = (await request.json()) as { connectionId?: unknown };
+          if (typeof body.connectionId !== "string") {
+            return Response.json(
+              { error: "A connection id is required." },
+              { status: 400 },
+            );
+          }
+          return Response.json(await connections.startLogin(body.connectionId));
+        }
+
+        if (url.pathname === "/auth/login/status" && request.method === "GET") {
+          const connectionId = url.searchParams.get("connectionId") ?? "";
+          const loginId = url.searchParams.get("loginId") ?? "";
+          if (!connectionId || !loginId) {
+            return Response.json(
+              { error: "A connection id and login id are required." },
+              { status: 400 },
+            );
+          }
+          return Response.json(
+            await connections.loginStatus(connectionId, loginId),
+          );
+        }
+
+        if (
+          url.pathname === "/auth/login/cancel" &&
+          request.method === "POST"
+        ) {
+          const body = (await request.json()) as {
+            connectionId?: unknown;
+            loginId?: unknown;
+          };
+          if (
+            typeof body.connectionId !== "string" ||
+            typeof body.loginId !== "string"
+          ) {
+            return Response.json(
+              { error: "A connection id and login id are required." },
+              { status: 400 },
+            );
+          }
+          await connections.cancelLogin(body.connectionId, body.loginId);
+          return new Response(null, { status: 204 });
+        }
+
+        const connection = url.pathname.match(/^\/auth\/connections\/([^/]+)$/);
+        if (connection && request.method === "DELETE") {
+          await connections.disconnect(decodeURIComponent(connection[1] ?? ""));
+          return new Response(null, { status: 204 });
+        }
+      } catch (error) {
+        return Response.json(
+          {
+            error:
+              error instanceof Error
+                ? error.message
+                : "Codex authorization failed.",
+          },
+          { status: 400 },
+        );
+      }
     }
 
     if (url.pathname === "/ag-ui" && request.method === "POST") {
       if (!hasManagedAgentToken(request, MANAGED_AGENT_TOKEN)) {
         return Response.json({ error: "Unauthorized." }, { status: 401 });
       }
-      return runAgent((await request.json()) as RunAgentInput, request.signal);
+      const connectionId = providerConnectionFrom(request);
+      if (providerTypeFrom(request) !== "codex" || !connectionId) {
+        return Response.json(
+          { error: "A personal Codex connection is required." },
+          { status: 401 },
+        );
+      }
+      return runAgent(
+        (await request.json()) as RunAgentInput,
+        request.signal,
+        connectionId,
+      );
     }
 
     return Response.json({ error: "Not found." }, { status: 404 });
   },
 });
 
-const account = codex.accountSummary();
 console.info(
-  `agent-codex listening on http://localhost:${PORT}/ag-ui (${account.authMode}, ${account.planType ?? "unknown plan"}; persistent threads; OpenBot-governed tools)`,
+  `agent-codex listening on http://localhost:${PORT}/ag-ui (per-user ChatGPT OAuth; persistent threads; OpenBot-governed tools)`,
 );

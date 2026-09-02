@@ -17,6 +17,13 @@ type AccountSummary = {
   planType: string | null;
 };
 
+export type CodexLoginStatus =
+  | { status: "pending" }
+  | { status: "connected" }
+  | { status: "failed"; error: string };
+
+type InternalLoginStatus = CodexLoginStatus | { status: "completed" };
+
 type PendingRequest = {
   resolve: (value: unknown) => void;
   reject: (error: Error) => void;
@@ -94,6 +101,7 @@ export class CodexAppServerClient {
   private listeners = new Set<(message: JsonRpcMessage) => void>();
   private activeTurns = new Map<string, ActiveTurn>();
   private account: AccountSummary | undefined;
+  private loginStates = new Map<string, InternalLoginStatus>();
   private safetyConfig: JsonObject = safetyConfigFor([]);
 
   constructor(private readonly spawnAppServer: SpawnAppServer = launchCodex) {}
@@ -131,20 +139,7 @@ export class CodexAppServerClient {
     });
     this.notify("initialized", {});
 
-    const result = (await this.request("account/read", {
-      refreshToken: false,
-    })) as {
-      account?: { type?: string; planType?: string | null } | null;
-    };
-    if (result.account?.type !== "chatgpt") {
-      throw new Error(
-        "Codex is not logged in with ChatGPT. Run `codex login` on this Mac first.",
-      );
-    }
-    this.account = {
-      authMode: result.account.type,
-      planType: result.account.planType ?? null,
-    };
+    await this.readAccount(false);
 
     const configResult = (await this.request("config/read", {
       includeLayers: false,
@@ -156,11 +151,84 @@ export class CodexAppServerClient {
     );
   }
 
-  accountSummary(): AccountSummary {
+  accountSummary(): AccountSummary | null {
+    if (!this.child) throw new Error("Codex app-server is not running.");
+    return this.account ?? null;
+  }
+
+  async requireAuthenticated(): Promise<AccountSummary> {
+    await this.readAccount(true);
     if (!this.account) {
-      throw new Error("Codex app-server has not finished starting.");
+      throw new Error(
+        "This Codex connection is not signed in. Reconnect it in Settings.",
+      );
     }
     return this.account;
+  }
+
+  async startDeviceLogin(): Promise<{
+    loginId: string;
+    verificationUrl: string;
+    userCode: string;
+  }> {
+    const result = (await this.request("account/login/start", {
+      type: "chatgptDeviceCode",
+    })) as {
+      type?: string;
+      loginId?: string;
+      verificationUrl?: string;
+      userCode?: string;
+    };
+    if (
+      result.type !== "chatgptDeviceCode" ||
+      !result.loginId ||
+      !result.verificationUrl ||
+      !result.userCode
+    ) {
+      throw new Error(
+        "Codex returned an invalid device authorization response.",
+      );
+    }
+    // A very fast app-server may emit completion immediately after the response, before this
+    // promise continuation runs. Preserve that notification instead of overwriting it as pending.
+    if (!this.loginStates.has(result.loginId)) {
+      this.loginStates.set(result.loginId, { status: "pending" });
+    }
+    return {
+      loginId: result.loginId,
+      verificationUrl: result.verificationUrl,
+      userCode: result.userCode,
+    };
+  }
+
+  async loginStatus(loginId: string): Promise<CodexLoginStatus> {
+    const state = this.loginStates.get(loginId);
+    if (!state) {
+      return { status: "failed", error: "That Codex login was not found." };
+    }
+    if (state.status !== "completed") return state;
+
+    await this.readAccount(false);
+    if (!this.account) return { status: "pending" };
+    const connected = { status: "connected" } as const;
+    this.loginStates.set(loginId, connected);
+    return connected;
+  }
+
+  async cancelLogin(loginId: string): Promise<void> {
+    const state = this.loginStates.get(loginId);
+    if (state?.status !== "pending") return;
+    await this.request("account/login/cancel", { loginId });
+    this.loginStates.set(loginId, {
+      status: "failed",
+      error: "Authorization was cancelled.",
+    });
+  }
+
+  async logout(): Promise<void> {
+    if (!this.child) return;
+    await this.request("account/logout", {});
+    this.account = undefined;
   }
 
   async startThread(
@@ -379,6 +447,19 @@ export class CodexAppServerClient {
     this.child = undefined;
   }
 
+  private async readAccount(refreshToken: boolean): Promise<void> {
+    const result = (await this.request("account/read", { refreshToken })) as {
+      account?: { type?: string; planType?: string | null } | null;
+    };
+    this.account =
+      result.account?.type === "chatgpt"
+        ? {
+            authMode: result.account.type,
+            planType: result.account.planType ?? null,
+          }
+        : undefined;
+  }
+
   private onMessage(listener: (message: JsonRpcMessage) => void): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
@@ -424,6 +505,36 @@ export class CodexAppServerClient {
     } catch {
       console.error("Codex app-server returned a non-JSON line.");
       return;
+    }
+
+    if (message.method === "account/login/completed") {
+      const loginId = message.params?.loginId;
+      if (typeof loginId === "string") {
+        if (message.params?.success === true) {
+          this.loginStates.set(loginId, { status: "completed" });
+        } else {
+          this.loginStates.set(loginId, {
+            status: "failed",
+            error:
+              typeof message.params?.error === "string"
+                ? message.params.error
+                : "ChatGPT authorization failed.",
+          });
+        }
+      }
+    }
+    if (message.method === "account/updated") {
+      const authMode = message.params?.authMode;
+      this.account =
+        authMode === "chatgpt"
+          ? {
+              authMode,
+              planType:
+                typeof message.params?.planType === "string"
+                  ? message.params.planType
+                  : null,
+            }
+          : undefined;
     }
 
     if (message.id !== undefined && message.method) {
@@ -629,8 +740,13 @@ export function safeCodexEnvironment(
  * browser, computer and integration features are disabled on the command line before the app-server
  * can create a turn, and OpenBot credentials are absent from the child's environment entirely.
  */
-export function codexLaunchSpec(source: NodeJS.ProcessEnv = process.env) {
+export function codexLaunchSpec(
+  source: NodeJS.ProcessEnv = process.env,
+  codexHome?: string,
+) {
   const binary = source.CODEX_BINARY?.trim() || "codex";
+  const env: NodeJS.ProcessEnv = safeCodexEnvironment(source);
+  if (codexHome) env.CODEX_HOME = resolve(codexHome);
   return {
     binary,
     args: [
@@ -638,17 +754,22 @@ export function codexLaunchSpec(source: NodeJS.ProcessEnv = process.env) {
       "--stdio",
       "--config",
       'shell_environment_policy.inherit="none"',
+      "--config",
+      'cli_auth_credentials_store="file"',
       ...DISABLED_NATIVE_FEATURES.flatMap((feature) => ["--disable", feature]),
     ],
     cwd: resolve(
       source.CODEX_AGENT_WORKSPACE?.trim() || ".openbot-codex/workspace",
     ),
-    env: safeCodexEnvironment(source),
+    env,
   };
 }
 
-function launchCodex(): ChildProcessWithoutNullStreams {
-  const spec = codexLaunchSpec();
+export function launchCodex(
+  source: NodeJS.ProcessEnv = process.env,
+  codexHome?: string,
+): ChildProcessWithoutNullStreams {
+  const spec = codexLaunchSpec(source, codexHome);
   return spawn(spec.binary, spec.args, {
     cwd: spec.cwd,
     env: spec.env,

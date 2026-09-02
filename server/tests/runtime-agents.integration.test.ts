@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { createAgentProfileStore } from "../src/agents/profile-store";
 import type { AgentActor } from "../src/agents/profile-types";
+import { AGENT_PROVIDER_CATALOG } from "../src/agents/providers";
 import { createRuntimeAgentLoader } from "../src/agents/runtime-agents";
 import { createChannelStore } from "../src/channels/routes";
 import { createThreadIdentity } from "../src/channels/thread-identity";
@@ -139,6 +140,69 @@ describe("runtime agent loading", () => {
     });
 
     expect(idsOf(await loadAgents(otherUser))).toContain(profile.id);
+  });
+
+  test("runs a public coworker with the runner's key, never its owner's", async () => {
+    const owner = await createUser();
+    const otherUser = await createUser();
+    const disconnectedUser = await createUser();
+    const profile = await createCoworker(owner, {
+      name: "Shared Researcher",
+      visibility: "public",
+    });
+    const runtime = {
+      ...AGENT_PROVIDER_CATALOG[1],
+      endpoint: managedEndpoint,
+      token: managedAgentToken,
+    };
+    const loadWithPersonalConnections = createRuntimeAgentLoader(
+      database,
+      undefined,
+      [runtime],
+      {
+        credentialFor: async (runner) =>
+          runner.id === disconnectedUser.id
+            ? null
+            : {
+                authentication: "api-key" as const,
+                secret: runner.id === owner.id ? "owner-key" : "other-user-key",
+              },
+      },
+    );
+
+    const ownerAgent = (await loadWithPersonalConnections(owner)).find(
+      (agent) => agent.id === profile.id,
+    );
+    const otherAgent = (await loadWithPersonalConnections(otherUser)).find(
+      (agent) => agent.id === profile.id,
+    );
+    const unavailable = (
+      await loadWithPersonalConnections(disconnectedUser)
+    ).find((agent) => agent.id === profile.id);
+
+    expect(ownerAgent).toMatchObject({
+      type: "remote_ag_ui",
+      headers: {
+        "x-openbot-agent-token": managedAgentToken,
+        "x-openbot-provider-type": "openai",
+        "x-openbot-provider-credential": "owner-key",
+      },
+    });
+    expect(otherAgent).toMatchObject({
+      type: "remote_ag_ui",
+      headers: {
+        "x-openbot-agent-token": managedAgentToken,
+        "x-openbot-provider-type": "openai",
+        "x-openbot-provider-credential": "other-user-key",
+      },
+    });
+    expect(JSON.stringify(otherAgent)).not.toContain("owner-key");
+    expect(unavailable).toEqual({
+      id: profile.id,
+      name: "Shared Researcher",
+      type: "unavailable",
+      reason: "Connect OpenAI in Settings before running Shared Researcher.",
+    });
   });
 
   test("drops a deleted coworker that has no history to restore", async () => {

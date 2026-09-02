@@ -18,12 +18,13 @@ import {
   sameToken,
 } from "./callback-token";
 import { canCustomizeAgentAvatar, canManageAgent } from "./profile-policy";
-import { AGENT_PROVIDER_CATALOG, type AgentProviderRuntime } from "./providers";
 import type {
   AgentActor,
   AgentProfile,
   CreateAgentInput,
 } from "./profile-types";
+import type { ProviderConnectionReader } from "./provider-connections";
+import { AGENT_PROVIDER_CATALOG, type AgentProviderRuntime } from "./providers";
 
 type Transaction = Parameters<Parameters<Database["transaction"]>[0]>[0];
 type DatabaseExecutor = Pick<Database, "select"> | Pick<Transaction, "select">;
@@ -110,6 +111,13 @@ export class ManagedAgentUnavailableError extends Error {
       "The selected provider is not configured on this deployment. Choose an available provider or give the agent a custom AG-UI endpoint.",
     );
     this.name = "ManagedAgentUnavailableError";
+  }
+}
+
+export class ProviderConnectionRequiredError extends Error {
+  constructor(providerName: string) {
+    super(`Connect ${providerName} in Settings before using it for an agent.`);
+    this.name = "ProviderConnectionRequiredError";
   }
 }
 
@@ -298,6 +306,8 @@ export function createAgentProfileStore(
    * agent with a key then simply cannot be created, which is better than storing it in the clear.
    */
   vault?: { store: CredentialStore; encryptionKey: string },
+  /** The actor's own provider accounts. Absent preserves legacy stores used by older deployments. */
+  providerConnections?: Pick<ProviderConnectionReader, "connected">,
 ): AgentProfileStore {
   const providers: readonly AgentProviderRuntime[] =
     configuredProviders instanceof URL
@@ -351,9 +361,18 @@ export function createAgentProfileStore(
         const id = newAgentId();
         const provider = input.providerId
           ? providers.find((candidate) => candidate.id === input.providerId)
-          : undefined;
+          : !input.endpoint && providers.length === 1
+            ? providers[0]
+            : undefined;
         if (input.providerId && !provider) {
           throw new ManagedAgentUnavailableError();
+        }
+        if (
+          provider &&
+          providerConnections &&
+          !(await providerConnections.connected(actor, provider.id))
+        ) {
+          throw new ProviderConnectionRequiredError(provider.name);
         }
         const configuration = provider
           ? {
@@ -362,12 +381,7 @@ export function createAgentProfileStore(
             }
           : input.endpoint
             ? { endpoint: input.endpoint }
-            : providers.length === 1
-              ? {
-                  endpoint: providers[0]?.endpoint.toString(),
-                  providerId: providers[0]?.id,
-                }
-              : undefined;
+            : undefined;
         if (!configuration) throw new ManagedAgentUnavailableError();
         await transaction.insert(agents).values({
           id,
@@ -441,6 +455,14 @@ export function createAgentProfileStore(
             : undefined;
           if (input.providerId && !provider) {
             throw new ManagedAgentUnavailableError();
+          }
+          if (
+            provider &&
+            provider.id !== providerIdOf(previous) &&
+            providerConnections &&
+            !(await providerConnections.connected(actor, provider.id))
+          ) {
+            throw new ProviderConnectionRequiredError(provider.name);
           }
           const { providerId: _previousProvider, ...withoutProvider } =
             previous;
@@ -540,6 +562,13 @@ export function createAgentProfileStore(
             candidate.id === source.providerId ||
             candidate.endpoint.toString() === source.endpoint,
         );
+        if (
+          provider &&
+          providerConnections &&
+          !(await providerConnections.connected(actor, provider.id))
+        ) {
+          throw new ProviderConnectionRequiredError(provider.name);
+        }
         const configuration = provider
           ? {
               endpoint: provider.endpoint.toString(),

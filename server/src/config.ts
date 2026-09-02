@@ -3,13 +3,14 @@
  * for durable threads and memory. Configuration the product cannot function without belongs at the
  * boot boundary.
  */
-import { singleUserEnabled } from "./auth/dev-actor";
+
 import {
   AGENT_PROVIDER_CATALOG,
   type AgentProviderId,
   type AgentProviderRuntime,
   isAgentProviderId,
 } from "./agents/providers";
+import { singleUserEnabled } from "./auth/dev-actor";
 import type { ActionPolicy } from "./computer/policy";
 import { parseActionPolicy } from "./computer/policy-store";
 
@@ -827,13 +828,7 @@ function generativeUiEnabled(environment: Environment): boolean {
   return on === "true" || on === "1";
 }
 
-/**
- * Whether this deployment is deliberately reusing the host's signed-in Codex account.
- *
- * Unlike a provider API key, that login belongs to the person running this machine. Treating any
- * other spelling as false would make a typo silently remove the multi-user safety check below, so
- * this switch is strict even when the start script is bypassed and the server is run directly.
- */
+/** Whether this deployment starts the Codex provider adapter. */
 function localCodexEnabled(environment: Environment): boolean {
   const value = optional(environment, "CODEX_AGENT_ENABLED");
   if (!value || value === "false") return false;
@@ -850,10 +845,12 @@ const PROVIDER_ENV_NAMES: Record<AgentProviderId, string> = {
 };
 
 /**
- * Provider runtimes are deployment resources; agents only store which one they use.
+ * Provider runtimes are deployment resources; provider accounts belong to users, and agents only
+ * store which provider type they use.
  *
  * The old MANAGED_AGENT pair remains the default runtime for compatibility. Named pairs add more
- * choices without putting an API key or subscription credential on every agent row.
+ * choices without putting an API key or subscription credential on every agent row. The runtime
+ * token authenticates this server to the adapter; it is not a vendor/model credential.
  */
 function agentProviderConfigs(
   environment: Environment,
@@ -952,18 +949,6 @@ export function loadConfig(
     environment,
     configuredAuthProviders(auth).length > 0,
   );
-
-  /*
-   * The Codex adapter has one host login, not one credential per OpenBot user. Personal coworker
-   * profiles are useful — each has its own standing role, channels and grants — but putting a
-   * sign-in screen in front of that one account would make every admitted user exercise the same
-   * person's Codex authority. Refuse that deployment shape at boot, where the boundary is clear.
-   */
-  if (localCodexEnabled(environment) && !singleUser) {
-    throw new Error(
-      "CODEX_AGENT_ENABLED reuses one host Codex login and requires OPENBOT_SINGLE_USER=true with no identity provider. Disable local Codex before enabling shared sign-in.",
-    );
-  }
 
   return {
     databaseUrl: required(environment, "DATABASE_URL"),

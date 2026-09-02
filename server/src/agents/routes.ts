@@ -14,12 +14,14 @@ import {
   type AgentProfileStore,
   ManagedAgentUnavailableError,
   ProtectedAgentError,
+  ProviderConnectionRequiredError,
 } from "./profile-store";
 import type {
   AgentActor,
   AgentProfile,
   CreateAgentInput,
 } from "./profile-types";
+import type { ProviderConnectionReader } from "./provider-connections";
 import { AGENT_PROVIDER_CATALOG, type AgentProviderRuntime } from "./providers";
 
 type AgentInputParseResult =
@@ -209,6 +211,8 @@ export function createAgentRoutes(
    * dialog nagged provider-managed agents about a credential they never needed.
    */
   managedEndpoint?: string,
+  /** Per-person provider accounts, read on every request because connection state is user data. */
+  providerConnections?: ProviderConnectionReader,
 ) {
   const providers: readonly AgentProviderRuntime[] = Array.isArray(
     providerConfiguration,
@@ -351,19 +355,31 @@ export function createAgentRoutes(
    * Static per process: whether a managed Bot exists is deployment configuration, not data. Above
    * the parameterised route on purpose, so "capabilities" can never be read as an agent id.
    */
-  routes.get("/capabilities", requireUser, (context) =>
-    context.json({
+  routes.get("/capabilities", requireUser, async (context) => {
+    const connectionStatuses = providerConnections
+      ? await providerConnections.statuses(context.var.actor)
+      : null;
+    const providers = AGENT_PROVIDER_CATALOG.map((provider) => {
+      const runtimeAvailable = availableProviders.some(
+        (configured) => configured.id === provider.id,
+      );
+      const connected =
+        connectionStatuses?.find((status) => status.id === provider.id)
+          ?.connected ?? true;
+      return {
+        ...provider,
+        runtimeAvailable,
+        connected,
+        available: runtimeAvailable && connected,
+      };
+    });
+    return context.json({
       capabilities: {
-        builtInAvailable: availableProviders.length > 0,
-        providers: AGENT_PROVIDER_CATALOG.map((provider) => ({
-          ...provider,
-          available: availableProviders.some(
-            (configured) => configured.id === provider.id,
-          ),
-        })),
+        builtInAvailable: providers.some((provider) => provider.available),
+        providers,
       },
-    }),
-  );
+    });
+  });
 
   routes.get("/:agentId", requireUser, async (context) => {
     try {
@@ -699,6 +715,9 @@ function mapStoreError(context: Context, error: unknown): Response {
   }
   if (error instanceof ManagedAgentUnavailableError) {
     return context.json({ error: error.message }, 400);
+  }
+  if (error instanceof ProviderConnectionRequiredError) {
+    return context.json({ error: error.message }, 409);
   }
   throw error;
 }

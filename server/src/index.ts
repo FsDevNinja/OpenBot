@@ -15,6 +15,7 @@ import { createHandoffRunner } from "./agents/handoff-runner";
 import { handoffTool } from "./agents/handoff-tool";
 import { createAgentProfileStore } from "./agents/profile-store";
 import type { AgentActor } from "./agents/profile-types";
+import { createProviderConnectionStore } from "./agents/provider-connections";
 import { createRuntimeAgentLoader } from "./agents/runtime-agents";
 import { createApp } from "./app";
 import { createAuditReader, createAuditStore, recordAuditEvent } from "./audit";
@@ -52,8 +53,8 @@ import { createSnapshotStore } from "./computer/snapshot-store";
 import {
   computerSocketIsolationRefusal,
   computerSocketUrl,
-  parseComputerSocketPath,
   parseComputerSocketLease,
+  parseComputerSocketPath,
 } from "./computer/socket-proxy";
 import { loadConfig } from "./config";
 import {
@@ -168,15 +169,24 @@ await initializeDevActorUser(database, config.singleUser);
 // The vault, built before the agent store because a customer's agent may sit behind a key and that
 // key belongs here rather than on the agent row. See agents/auth-header.ts.
 const credentialStore = createCredentialStore(database);
+const bootAuditStore = createAuditStore(database);
 const agentVault = {
   store: credentialStore,
   reader: credentialStore,
   encryptionKey: config.keyEncryptionKey,
 };
+const providerConnectionStore = createProviderConnectionStore(
+  config.agentProviders,
+  {
+    ...agentVault,
+    auditStore: bootAuditStore,
+  },
+);
 const agentProfileStore = createAgentProfileStore(
   database,
   config.agentProviders,
   agentVault,
+  providerConnectionStore,
 );
 // Read here rather than beside the synchronise below, because the package names the deployment and
 // the channel store needs that name before it can mint a thread id.
@@ -210,6 +220,7 @@ const loadAgentsForActor = createRuntimeAgentLoader(
   database,
   agentVault,
   config.agentProviders,
+  providerConnectionStore,
 );
 await synchronizeTenantPackage(database, tenantPackage);
 /*
@@ -281,7 +292,6 @@ const policyListener = await startPolicyListener(
  * Not awaited and never fatal. A deployment must not fail to start because its audit trail is
  * unavailable, and the row is a note for a reader rather than something the server depends on.
  */
-const bootAuditStore = createAuditStore(database);
 // One store: the gateway writes through it, a route reads it, and the sweep below takes the old ones out.
 const pageFrameStore = createPageFrameStore(database);
 // Housekeeping on a schedule: audit rows when asked for, screenshots always, one timer. See audit-retention.ts.
@@ -1087,6 +1097,8 @@ const app = createApp(
   routineStore,
   // Where each person is in first-run onboarding, read by /api/me and written by the wizard.
   createOnboardingStore(database),
+  // Model vendors are account connections, owned by the signed-in person who will run the Bot.
+  providerConnectionStore,
 );
 
 /**

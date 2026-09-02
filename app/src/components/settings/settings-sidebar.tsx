@@ -1,5 +1,6 @@
 import {
   IconArrowLeft,
+  IconKey,
   IconLayoutGrid,
   IconPlug,
   IconSettings,
@@ -37,6 +38,11 @@ const ITEMS: {
     /* `/settings` prefixes every other route here, and would otherwise light up on all of them. */
     exact: true,
     linkOptions: { to: "/settings" },
+  },
+  {
+    title: "AI providers",
+    icon: IconKey,
+    linkOptions: { to: "/settings/providers" },
   },
   {
     /*

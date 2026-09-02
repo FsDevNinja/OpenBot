@@ -8,12 +8,14 @@ import {
   createAgentProfileStore,
   ManagedAgentUnavailableError,
   ProtectedAgentError,
+  ProviderConnectionRequiredError,
 } from "../src/agents/profile-store";
 import type {
   AgentActor,
   AgentProfile,
   CreateAgentInput,
 } from "../src/agents/profile-types";
+import { AGENT_PROVIDER_CATALOG } from "../src/agents/providers";
 import { DEPLOYMENT_ROUTES } from "../src/computer/deployment-routes";
 import { createDatabase } from "../src/db/client";
 import {
@@ -262,6 +264,31 @@ describe("agent profile store integration", () => {
       ownerUserId: owner.id,
       visibility: "private",
     });
+  });
+
+  test("requires the creator to connect the selected provider", async () => {
+    const owner = await createUser();
+    const runtime = {
+      ...AGENT_PROVIDER_CATALOG[1],
+      endpoint: managedAgentAgUiUrl,
+      token: "runtime-token",
+    };
+    const personalStore = createAgentProfileStore(
+      database,
+      [runtime],
+      undefined,
+      { connected: async () => false },
+    );
+
+    await expect(
+      personalStore.create(owner, {
+        name: "Unconnected Researcher",
+        title: "Research",
+        roleDescription: "Cannot run without the creator's provider account.",
+        visibility: "private",
+        providerId: "openai",
+      }),
+    ).rejects.toBeInstanceOf(ProviderConnectionRequiredError);
   });
 
   test("lets an owner and admin get and list a private profile but hides it from another user", async () => {

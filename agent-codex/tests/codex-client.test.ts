@@ -32,6 +32,7 @@ class FakeAppServer {
   readonly process: ChildProcessWithoutNullStreams;
   toolResponse: Record<string, unknown> | undefined;
   toolResponses: Record<string, unknown>[] = [];
+  private loggedIn: boolean;
 
   private readonly stdin = new PassThrough();
   private readonly stdout = new PassThrough();
@@ -44,8 +45,10 @@ class FakeAppServer {
       | "duplicate"
       | "malformed"
       | "waiting"
-      | "replay" = "tool",
+      | "replay"
+      | "login" = "tool",
   ) {
+    this.loggedIn = turn !== "login";
     const child = new EventEmitter() as EventEmitter & {
       stdin: PassThrough;
       stdout: PassThrough;
@@ -103,9 +106,39 @@ class FakeAppServer {
         this.result(message.id, {});
         break;
       case "account/read":
+        this.result(
+          message.id,
+          this.loggedIn
+            ? { account: { type: "chatgpt", planType: "plus" } }
+            : { account: null },
+        );
+        break;
+      case "account/login/start":
         this.result(message.id, {
-          account: { type: "chatgpt", planType: "plus" },
+          type: "chatgptDeviceCode",
+          loginId: "login-1",
+          verificationUrl: "https://auth.openai.test/device",
+          userCode: "ABCD-1234",
         });
+        setTimeout(() => {
+          this.loggedIn = true;
+          this.send({
+            method: "account/login/completed",
+            params: {
+              loginId: "login-1",
+              success: true,
+              error: null,
+            },
+          });
+          this.send({
+            method: "account/updated",
+            params: { authMode: "chatgpt", planType: "plus" },
+          });
+        }, 0);
+        break;
+      case "account/logout":
+        this.loggedIn = false;
+        this.result(message.id, {});
         break;
       case "config/read":
         this.result(message.id, {
@@ -280,6 +313,7 @@ describe("CodexAppServerClient", () => {
     expect(spec.binary).toBe("/opt/codex");
     expect(spec.cwd).toBe("/srv/codex-workspace");
     expect(spec.args).toContain('shell_environment_policy.inherit="none"');
+    expect(spec.args).toContain('cli_auth_credentials_store="file"');
     for (const feature of [
       "shell_tool",
       "unified_exec",
@@ -296,6 +330,31 @@ describe("CodexAppServerClient", () => {
       PATH: "/usr/bin",
       CODEX_HOME: "/srv/codex-home",
     });
+  });
+
+  test("connects a signed-out isolated Codex home through device OAuth", async () => {
+    const server = new FakeAppServer("login");
+    const client = new CodexAppServerClient(() => server.process);
+    await client.start();
+
+    expect(client.accountSummary()).toBeNull();
+    await expect(client.startDeviceLogin()).resolves.toEqual({
+      loginId: "login-1",
+      verificationUrl: "https://auth.openai.test/device",
+      userCode: "ABCD-1234",
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await expect(client.loginStatus("login-1")).resolves.toEqual({
+      status: "connected",
+    });
+    expect(client.accountSummary()).toEqual({
+      authMode: "chatgpt",
+      planType: "plus",
+    });
+
+    await client.logout();
+    expect(client.accountSummary()).toBeNull();
+    client.stop();
   });
 
   test("never inherits OpenBot or provider credentials into Codex", () => {

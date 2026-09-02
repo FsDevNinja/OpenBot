@@ -1,4 +1,5 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
+import { Link } from "@tanstack/react-router";
 import { AnimatePresence, MotionConfig, motion } from "motion/react";
 import { useState } from "react";
 import useMeasure from "react-use-measure";
@@ -44,8 +45,8 @@ import { queryClient } from "@/query-client";
  * Creating a coworker, one question at a time.
  *
  * A wizard rather than a form, because the answers are three different kinds of decision: who this
- * coworker is, who may see it, and what powers it. Provider credentials belong to the deployment,
- * not to the agent profile; a custom AG-UI endpoint remains the escape hatch.
+ * coworker is, who may see it, and what powers it. Provider credentials belong to the signed-in
+ * person, not to the agent profile; a custom AG-UI endpoint remains the escape hatch.
  */
 export function CreateAgentDialog({
   open,
@@ -482,6 +483,8 @@ function ProviderStep({
     id: string;
     name: string;
     description: string;
+    runtimeAvailable: boolean;
+    connected: boolean;
     available: boolean;
   }>;
   provider: ProviderChoice | null;
@@ -515,9 +518,12 @@ function ProviderStep({
           >
             <span className="font-medium">{option.name}</span>
             <QuestionnaireChoiceDescription>
+              {option.description}{" "}
               {option.available
-                ? option.description
-                : `${option.description} Not configured on this deployment.`}
+                ? ""
+                : !option.runtimeAvailable
+                  ? "Not available on this deployment."
+                  : "Connect it in Settings first."}
             </QuestionnaireChoiceDescription>
           </QuestionnaireChoice>
         ))}
@@ -532,6 +538,18 @@ function ProviderStep({
           </QuestionnaireChoiceDescription>
         </QuestionnaireChoice>
       </QuestionnaireChoices>
+      {providers.some(
+        (option) => option.runtimeAvailable && !option.connected,
+      ) ? (
+        <Button
+          render={<Link to="/settings/providers" />}
+          size="sm"
+          type="button"
+          variant="outline"
+        >
+          Manage AI providers
+        </Button>
+      ) : null}
       {showProviderError ? (
         <p className="text-sm text-destructive" role="alert">
           Choose what powers this agent.

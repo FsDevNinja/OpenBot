@@ -63,9 +63,8 @@ WORKER_SHARED_SECRET="$(setting WORKER_SHARED_SECRET openbot-dev-worker-secret)"
 #
 # Written into .env rather than exported for this run alone, so `docker compose up` by hand later
 # sees the same value the script used.
-# The laptop stack normally runs agent-langgraph on LANGGRAPH_PORT. The local Codex compatibility
-# mode instead runs a host process so it can reuse the person's existing `codex login` session
-# without copying ChatGPT credentials into Docker.
+# The laptop stack normally runs agent-langgraph on LANGGRAPH_PORT. Codex mode instead runs a host
+# process so its app-server can complete and persist a separate ChatGPT OAuth connection per user.
 if [ "$CODEX_AGENT_ENABLED" = "true" ]; then
   DEFAULT_MANAGED_AGENT_URL="http://localhost:${CODEX_AGENT_PORT}/ag-ui"
 else
@@ -250,6 +249,7 @@ wait_for "http://localhost:$COMPUTER_PORT/health" "agent-computer"
 if [ "$CODEX_AGENT_ENABLED" = "true" ]; then
   CODEX_AGENT_WORKSPACE="$(setting CODEX_AGENT_WORKSPACE "$ROOT/.openbot-codex/workspace")"
   CODEX_AGENT_STATE="$(setting CODEX_AGENT_STATE "$ROOT/.openbot-codex/threads.json")"
+  CODEX_AGENT_AUTH_ROOT="$(setting CODEX_AGENT_AUTH_ROOT "$ROOT/.openbot-codex/accounts")"
   OPENBOT_TOOL_URL="$(setting OPENBOT_TOOL_URL "http://localhost:${SERVER_PORT}/api/agent-tools/call")"
   mkdir -p "$CODEX_AGENT_WORKSPACE"
   require_free_or_ours "$CODEX_AGENT_PORT" "agent-codex"
@@ -265,6 +265,7 @@ if [ "$CODEX_AGENT_ENABLED" = "true" ]; then
       OPENBOT_TOOL_URL="$OPENBOT_TOOL_URL" \
       CODEX_AGENT_WORKSPACE="$CODEX_AGENT_WORKSPACE" \
       CODEX_AGENT_STATE="$CODEX_AGENT_STATE" \
+      CODEX_AGENT_AUTH_ROOT="$CODEX_AGENT_AUTH_ROOT" \
       bun agent-codex/src/index.ts >"$LOGS/agent-codex.log" 2>&1 </dev/null &)
   wait_for "http://localhost:$CODEX_AGENT_PORT/health" "agent-codex" 60
 else
@@ -293,7 +294,7 @@ green "  coworker tables migrated"
 # and masks it. So: report what was resolved, and do not re-read the file.
 green "  managed provider endpoint: $MANAGED_AGENT_AG_UI_URL"
 if [ "$CODEX_AGENT_ENABLED" = "true" ]; then
-  green "  Codex provider: ChatGPT login · persistent threads · OpenBot-governed tools"
+  green "  Codex provider: per-user ChatGPT OAuth · persistent threads · OpenBot-governed tools"
 fi
 
 info "2/4  Server"

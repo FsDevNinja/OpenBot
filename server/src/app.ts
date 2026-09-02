@@ -5,6 +5,8 @@ import { serveStatic } from "hono/bun";
 import { authoriseAgentCall, sameToken } from "./agents/callback-token";
 import type { BotAccessCheck } from "./agents/profile-policy";
 import type { AgentProfileStore } from "./agents/profile-store";
+import { createProviderConnectionRoutes } from "./agents/provider-connection-routes";
+import type { ProviderConnectionStore } from "./agents/provider-connections";
 import { createAgentRoutes } from "./agents/routes";
 import {
   type AuditReader,
@@ -355,6 +357,8 @@ export function createApp(
    * nothing can finish.
    */
   onboardingStore?: OnboardingStore,
+  /** Each signed-in person's own model-provider accounts. */
+  providerConnections?: ProviderConnectionStore,
 ) {
   const app = new Hono<{ Variables: AppVariables }>();
 
@@ -1047,6 +1051,8 @@ export function createApp(
         // Providers power coworkers but are not coworkers themselves. The route publishes only
         // their safe catalogue metadata; endpoints and runtime tokens stay server-side.
         config.agentProviders,
+        undefined,
+        providerConnections,
       ),
     );
     // Choosing a coworker for an untagged message needs the same permission-filtered roster the
@@ -1082,6 +1088,13 @@ export function createApp(
         ),
       );
     }
+  }
+
+  if (providerConnections) {
+    app.route(
+      "/api/provider-connections",
+      createProviderConnectionRoutes(providerConnections, requireUser),
+    );
   }
 
   if (channelStore) {

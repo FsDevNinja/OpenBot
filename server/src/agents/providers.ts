@@ -2,31 +2,38 @@ export const AGENT_PROVIDER_CATALOG = [
   {
     id: "codex",
     name: "Codex",
-    description: "Uses the ChatGPT account signed in on this machine.",
+    description: "Uses the ChatGPT account you authorize for your agents.",
+    authentication: "oauth",
   },
   {
     id: "openai",
     name: "OpenAI",
-    description: "Uses an OpenAI API-backed agent runtime.",
+    description: "Uses your OpenAI API account.",
+    authentication: "api-key",
   },
   {
     id: "anthropic",
     name: "Anthropic",
-    description: "Uses Claude through an Anthropic-backed agent runtime.",
+    description: "Uses Claude through your Anthropic API account.",
+    authentication: "api-key",
   },
   {
     id: "xai",
     name: "xAI",
-    description: "Uses Grok through an xAI-backed agent runtime.",
+    description: "Uses Grok through your xAI API account.",
+    authentication: "api-key",
   },
   {
     id: "google",
     name: "Google",
-    description: "Uses Gemini through a Google-backed agent runtime.",
+    description: "Uses Gemini through your Google AI API account.",
+    authentication: "api-key",
   },
 ] as const;
 
 export type AgentProviderId = (typeof AGENT_PROVIDER_CATALOG)[number]["id"];
+export type AgentProviderAuthentication =
+  (typeof AGENT_PROVIDER_CATALOG)[number]["authentication"];
 
 export type AgentProviderRuntime = {
   id: AgentProviderId;

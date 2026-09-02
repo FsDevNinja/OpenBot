@@ -224,9 +224,10 @@ services:
       # host: the server calls it over localhost, and other containers use the compose network.
       - "127.0.0.1:${BOT_PORT:-4200}:4200"
     environment:
-      OPENAI_API_KEY: ${OPENAI_API_KEY}
       # Server sends this on every call to the managed Bot. It refuses to start without it.
       MANAGED_AGENT_TOKEN: ${MANAGED_AGENT_TOKEN:-}
+      # The signed-in runner's key arrives from OpenBot's encrypted vault on each request. No
+      # deployment-wide model key is mounted into this container.
       # Unset means OpenAI. Set, it is any endpoint speaking the same API, and BOT_MODEL is sent
       # to it verbatim.
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
@@ -249,16 +250,13 @@ services:
       # Loopback, for the same reason as agent-bot above.
       - "127.0.0.1:${LANGGRAPH_PORT:-4201}:4201"
     environment:
-      # The selected provider reads its own key. Models requiring the Responses API use
-      # BOT_RESPONSES_API instead of changing the streaming loop here.
+      # The process serves one provider API shape. The signed-in runner's key arrives from OpenBot's
+      # encrypted vault on each request; no deployment-wide vendor key is mounted here.
       BOT_PROVIDER: ${BOT_PROVIDER:-openai}
       # Same server-to-Bot request boundary as agent-bot above.
       MANAGED_AGENT_TOKEN: ${MANAGED_AGENT_TOKEN:-}
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       ANTHROPIC_BASE_URL: ${ANTHROPIC_BASE_URL:-}
-      GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
       GOOGLE_GENERATIVE_AI_BASE_URL: ${GOOGLE_GENERATIVE_AI_BASE_URL:-}
       # gpt-5.5, to stay comparable with agent-bot above rather than because 5.6 does not work:
       # set BOT_MODEL to one and the Responses API is switched on for it automatically.

@@ -144,7 +144,7 @@ describe("deployment configuration", () => {
     expect(loadConfig(environment).managedAgent).toBeUndefined();
   });
 
-  test("allows one local administrator to reuse the host Codex login", () => {
+  test("offers the Codex adapter in a solo development workspace", () => {
     const config = loadConfig({
       ...withoutSignIn,
       OPENBOT_SINGLE_USER: "true",
@@ -173,15 +173,16 @@ describe("deployment configuration", () => {
     ).toEqual(["anthropic", "xai"]);
   });
 
-  test("refuses to share the host Codex login between signed-in users", () => {
-    expect(() =>
-      loadConfig({
-        ...baseEnvironment,
-        CODEX_AGENT_ENABLED: "true",
-      }),
-    ).toThrow(
-      "CODEX_AGENT_ENABLED reuses one host Codex login and requires OPENBOT_SINGLE_USER=true",
-    );
+  test("allows the per-user Codex OAuth adapter with shared sign-in", () => {
+    const config = loadConfig({
+      ...baseEnvironment,
+      CODEX_AGENT_ENABLED: "true",
+    });
+
+    expect(config.singleUser).toBe(false);
+    expect(config.agentProviders.map((provider) => provider.id)).toEqual([
+      "codex",
+    ]);
   });
 
   test("refuses an ambiguous local Codex switch", () => {

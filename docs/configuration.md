@@ -42,12 +42,10 @@ points it at `agent-langgraph` on a laptop, or at `agent-codex` when local Codex
 | `NODE_ENV`           | unset                              | `production` refuses the example `KEY_ENCRYPTION_KEY`. It does not decide whether sign-in is required; see `OPENBOT_SINGLE_USER`. |
 | `TENANT_PACKAGE_DIR` | `../examples/fintech`              | Tenant package directory, resolved from `server/`.                  |
 | `DEPLOYMENT_ID`      | the tenant package's id            | Names this deployment inside a shared Intelligence project.          |
-| `OPENAI_API_KEY`     | unset                              | Default model key for built-in agents and both provider-key Bots. Not needed for local Codex mode. |
+| `OPENAI_API_KEY`     | unset                              | Deployment model key for package-provided built-in agents and routing. User-created agents use each runner's Settings connection. |
 | `OPENAI_BASE_URL`    | unset                              | OpenAI-compatible endpoint that key is spent against. See below.    |
 | `BOT_PROVIDER`       | `openai`                           | Provider for `agent-langgraph`: `openai`, `anthropic`, or `google`. |
-| `ANTHROPIC_API_KEY`  | unset                              | Anthropic key when `BOT_PROVIDER=anthropic`.                        |
 | `ANTHROPIC_BASE_URL` | unset                              | Anthropic-compatible endpoint that key is spent against.            |
-| `GOOGLE_API_KEY`     | unset                              | Google key when `BOT_PROVIDER=google`.                              |
 | `GOOGLE_GENERATIVE_AI_BASE_URL` | unset                   | Google-compatible endpoint that key is spent against.               |
 | `BOT_MODEL`          | provider default from Bot code/env | Model used by the shipped Bots.                                     |
 | `BOT_RESPONSES_API`  | `false`                            | Makes `agent-langgraph` use the OpenAI Responses API.               |
@@ -135,8 +133,9 @@ in-cluster Service address.
 
 ## Local Codex provider
 
-Local Codex mode runs a host-side AG-UI adapter against the Codex app-server already authenticated by
-`codex login`. It is an alternative to starting the two provider-key Bot containers:
+Local Codex mode runs a host-side AG-UI adapter against Codex app-server. Each person connects their
+own ChatGPT account from **Settings → AI providers** using device authorization. It is an alternative
+to starting the two API-provider runtime containers:
 
 ```dotenv
 CODEX_AGENT_ENABLED=true
@@ -144,13 +143,14 @@ AGENT_ENDPOINT_ALLOWED_HOSTS=localhost:4202
 ```
 
 `scripts/start.sh` then makes `http://localhost:4202/ag-ui` the Codex provider endpoint,
-starts the adapter on the host, and keeps its Codex thread mapping under `.openbot-codex/`. An explicit
+starts the adapter on the host, and keeps its thread mapping and isolated OAuth state under
+`.openbot-codex/`. An explicit
 `MANAGED_AGENT_AG_UI_URL` still wins, so remove an old `localhost:4201` value when switching modes.
 
-This mode is deliberately single-user. The adapter reuses one person's host login, so the server
-refuses to start when `CODEX_AGENT_ENABLED=true` is combined with an identity provider. Inside that
-solo workspace, the one adapter can back any number of private team members: each profile has its
-own standing role, channels, tool grants, and (with `OPENBOT_ONE_COMPUTER_EACH=true`) computer.
+The adapter does not reuse `~/.codex/auth.json`. Every successful connection receives a separate
+`CODEX_HOME`, and an agent run carries only the signed-in runner's opaque connection id to the
+adapter. One adapter can therefore back any number of users and named team members without sharing
+ChatGPT credentials between them.
 
 | Variable                      | Default                              | Meaning |
 | ----------------------------- | ------------------------------------ | ------- |
@@ -158,6 +158,7 @@ own standing role, channels, tool grants, and (with `OPENBOT_ONE_COMPUTER_EACH=t
 | `CODEX_AGENT_PORT`            | `4202`                               | Host port for the adapter. |
 | `CODEX_AGENT_WORKSPACE`       | `.openbot-codex/workspace`           | Working directory passed to Codex turns. |
 | `CODEX_AGENT_STATE`           | `.openbot-codex/threads.json`        | Durable OpenBot-thread to Codex-thread mapping. |
+| `CODEX_AGENT_AUTH_ROOT`       | `.openbot-codex/accounts`            | Private root containing one isolated Codex OAuth cache per user connection. |
 | `CODEX_AGENT_TURN_TIMEOUT_MS` | `180000`                             | Maximum time allowed for one Codex app-server turn. |
 | `CODEX_BINARY`                | `codex`                              | Codex CLI binary to launch. |
 | `OPENBOT_TOOL_URL`            | local server `/api/agent-tools/call` | Callback where assigned tools re-enter OpenBot's grant, policy and audit gateway. |
@@ -169,9 +170,18 @@ hand, supply both plus `OPENBOT_TOOL_URL` and the state paths yourself. See
 ## Agent providers
 
 Providers power agents; they are not agents themselves. The creation wizard lists Codex, OpenAI,
-Anthropic, xAI, and Google, and enables only the runtimes configured on this deployment. An agent
-stores the provider id while the provider endpoint and token remain server-side. Name, standing
-role, visibility, channels, grants, avatar, and conversation state remain properties of the agent.
+Anthropic, xAI, and Google, and enables a choice only when the deployment has that runtime and the
+signed-in person connected that provider under Settings > AI providers. An agent stores the
+provider id while endpoints, runtime tokens, and personal credentials remain server-side. Name,
+standing role, visibility, channels, grants, avatar, and conversation state remain properties of
+the agent.
+
+Provider credentials are keyed by user and provider type, not by agent. On every run OpenBot reads
+the runner's connection from the encrypted credential vault and passes it only to the configured
+runtime. A public agent therefore uses Alice's key when Alice runs it and Bob's key when Bob runs it;
+the creator's key is never inherited or shared. For Codex, OpenBot stores an encrypted opaque
+connection id while the adapter keeps that connection's OAuth tokens inside its isolated
+`CODEX_HOME`.
 
 The legacy `MANAGED_AGENT_AG_UI_URL` and `MANAGED_AGENT_TOKEN` pair registers one provider. Codex
 mode identifies it as `codex`; otherwise `MANAGED_AGENT_PROVIDER` or `BOT_PROVIDER` identifies it,
@@ -186,13 +196,16 @@ AGENT_PROVIDER_XAI_TOKEN=...
 
 The same shape is available for `CODEX`, `OPENAI`, and `GOOGLE`. Each URL must point to an AG-UI
 runtime that actually speaks to that vendor; OpenBot does not send vendor API keys to the browser or
-store them on individual agents. A provider with only one half of its URL/token pair stops startup.
+store them on individual agents. The token in each pair authenticates OpenBot to that runtime; it is
+not a shared vendor key. A provider with only one half of its URL/token pair stops startup.
 
 ## OpenAI-compatible endpoints
 
 `OPENAI_BASE_URL` decides where an OpenAI-shaped request is answered. Unset, that is OpenAI. Set, it is any endpoint speaking the same API: a gateway in front of several providers, a proxy, or a model on hardware you control.
 
-It moves the whole deployment rather than one Bot. The API server reads it for package built-in agents, `agent-bot` reads it for the client it constructs, and `agent-langgraph` reads it for `BOT_PROVIDER=openai`.
+It moves the OpenAI-compatible deployment endpoints together. The API server uses the deployment key
+for package-provided built-in agents. Provider runtimes construct their clients with the signed-in
+runner's Settings key instead.
 
 The other two providers work the same way under their own names, because they are different APIs rather than different URLs for this one: `ANTHROPIC_BASE_URL` and `GOOGLE_GENERATIVE_AI_BASE_URL`. All three are the names the API server already reads, so one line moves the built-in agents and the Bots together and a deployment cannot end up with half of itself pointed somewhere else.
 

@@ -1,4 +1,9 @@
 import { and, eq, isNotNull, isNull, or } from "drizzle-orm";
+import {
+  PROVIDER_CONNECTION_HEADER,
+  PROVIDER_CREDENTIAL_HEADER,
+  PROVIDER_TYPE_HEADER,
+} from "../../../shared/agent-authorisation";
 import { type RegisteredAgent, registeredAgentFromRow } from "../copilot";
 import type { CredentialSecretReader } from "../credentials";
 import type { Database } from "../db/client";
@@ -10,7 +15,8 @@ import {
 } from "../db/schema";
 import { agentAuthHeaders, authFromConfiguration } from "./auth-header";
 import type { AgentActor } from "./profile-types";
-import type { AgentProviderRuntime } from "./providers";
+import type { ProviderConnectionReader } from "./provider-connections";
+import { AGENT_PROVIDER_CATALOG, type AgentProviderRuntime } from "./providers";
 
 /**
  * Read the agents one person may run, on every request.
@@ -27,13 +33,16 @@ export function createRuntimeAgentLoader(
   managedAgents?:
     | { endpoint: URL; token: string }
     | readonly AgentProviderRuntime[],
+  /** Resolves the signed-in runner's provider account, never the profile owner's. */
+  providerConnections?: Pick<ProviderConnectionReader, "credentialFor">,
 ) {
-  const providerRuntimes: readonly { endpoint: URL; token: string }[] =
-    Array.isArray(managedAgents)
-      ? managedAgents
-      : managedAgents
-        ? [managedAgents]
-        : [];
+  const providerRuntimes: readonly AgentProviderRuntime[] = Array.isArray(
+    managedAgents,
+  )
+    ? managedAgents
+    : managedAgents
+      ? [{ ...AGENT_PROVIDER_CATALOG[1], ...managedAgents }]
+      : [];
   return async (actor: AgentActor): Promise<RegisteredAgent[]> => {
     const [active, tombstones] = await Promise.all([
       selectActiveAgents(database, actor),
@@ -56,13 +65,40 @@ export function createRuntimeAgentLoader(
         });
         if (headers) agent.headers = headers;
       }
+      const providerId = providerIdFrom(row.configuration);
       const provider =
         agent.type === "remote_ag_ui"
           ? providerRuntimes.find(
-              (runtime) => runtime.endpoint.toString() === agent.endpoint,
+              (runtime) =>
+                runtime.id === providerId ||
+                runtime.endpoint.toString() === agent.endpoint,
             )
           : undefined;
       if (agent.type === "remote_ag_ui" && provider) {
+        if (providerConnections) {
+          const credential = await providerConnections.credentialFor(
+            actor,
+            provider.id,
+          );
+          if (!credential) {
+            registered.set(agent.id, {
+              id: agent.id,
+              name: agent.name,
+              type: "unavailable",
+              reason: `Connect ${provider.name} in Settings before running ${agent.name}.`,
+            });
+            continue;
+          }
+          agent.headers = {
+            ...agent.headers,
+            [PROVIDER_TYPE_HEADER]: provider.id,
+            ...(credential.authentication === "api-key"
+              ? { [PROVIDER_CREDENTIAL_HEADER]: credential.secret }
+              : {
+                  [PROVIDER_CONNECTION_HEADER]: credential.connectionId,
+                }),
+          };
+        }
         agent.headers = {
           ...agent.headers,
           "x-openbot-agent-token": provider.token,
@@ -82,6 +118,12 @@ export function createRuntimeAgentLoader(
 
     return [...registered.values()];
   };
+}
+
+function providerIdFrom(configuration: unknown): string | null {
+  if (!configuration || typeof configuration !== "object") return null;
+  const value = (configuration as { providerId?: unknown }).providerId;
+  return typeof value === "string" ? value : null;
 }
 
 function selectActiveAgents(database: Database, actor: AgentActor) {

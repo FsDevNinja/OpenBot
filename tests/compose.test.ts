@@ -94,6 +94,9 @@ test("gives both shipped Bots the OpenAI-compatible endpoint", () => {
   ]) {
     expect(compose).toContain(`${variable}: \${${variable}:-}`);
   }
+  // Vendor keys belong to signed-in users and arrive on each run. Mounting one here would silently
+  // restore the deployment-shared account this boundary exists to remove.
+  expect(compose).not.toMatch(/^\s+(?:OPENAI|ANTHROPIC|GOOGLE)_API_KEY:/m);
 });
 
 test("enables pgvector before creating vector columns", () => {

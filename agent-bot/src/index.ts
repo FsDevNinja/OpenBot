@@ -2,7 +2,11 @@ import type { BaseEvent, RunAgentInput } from "@ag-ui/core";
 import { EventEncoder } from "@ag-ui/encoder";
 import { serve } from "bun";
 import OpenAI from "openai";
-import { hasManagedAgentToken } from "../../shared/agent-authorisation";
+import {
+  hasManagedAgentToken,
+  providerCredentialFrom,
+  providerTypeFrom,
+} from "../../shared/agent-authorisation";
 import { toProviderMessages } from "./history";
 
 /**
@@ -64,28 +68,6 @@ if (/^gpt-5\.[6-9]|^gpt-[6-9]/.test(MODEL)) {
  */
 const BASE_URL = process.env.OPENAI_BASE_URL?.trim() || undefined;
 
-/**
- * The key that model is answered with, checked at startup rather than on the first conversation.
- *
- * Without the check the Bot starts, answers the healthcheck, and then fails every run, so the
- * compose healthcheck reports a Bot that cannot answer as healthy. The LangGraph Bot already
- * refuses to start without its provider's key, and this file already refuses without its token
- * above; the model key was the one configuration that escaped the same posture. A missing key
- * should fail in front of whoever is deploying, not in front of whoever is asking.
- */
-const API_KEY = process.env.OPENAI_API_KEY?.trim();
-if (!API_KEY) {
-  console.error(
-    "OPENAI_API_KEY is not set. This Bot cannot answer without a model.",
-  );
-  process.exit(1);
-}
-
-const openai = new OpenAI({
-  apiKey: API_KEY,
-  baseURL: BASE_URL,
-});
-
 /** Every tool comes from the caller. This service publishes none of its own, on purpose. */
 function toProviderTools(input: RunAgentInput) {
   if (!input.tools?.length) return undefined;
@@ -99,7 +81,11 @@ function toProviderTools(input: RunAgentInput) {
   }));
 }
 
-async function runAgent(input: RunAgentInput): Promise<Response> {
+async function runAgent(
+  input: RunAgentInput,
+  apiKey: string,
+): Promise<Response> {
+  const openai = new OpenAI({ apiKey, baseURL: BASE_URL });
   const encoder = new EventEncoder();
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
@@ -220,15 +206,33 @@ serve({
     const url = new URL(request.url);
 
     if (url.pathname === "/health") {
-      return Response.json({ status: "ok", model: MODEL });
+      return Response.json({
+        status: "ok",
+        model: MODEL,
+        provider: "openai",
+        credentialMode: "user",
+      });
     }
 
     if (url.pathname === "/ag-ui" && request.method === "POST") {
       if (!hasManagedAgentToken(request, MANAGED_AGENT_TOKEN)) {
         return Response.json({ error: "Unauthorized." }, { status: 401 });
       }
+      if (providerTypeFrom(request) !== "openai") {
+        return Response.json(
+          { error: "This runtime serves openai." },
+          { status: 400 },
+        );
+      }
+      const apiKey = providerCredentialFrom(request);
+      if (!apiKey) {
+        return Response.json(
+          { error: "Connect OpenAI in Settings before running an agent." },
+          { status: 400 },
+        );
+      }
       const input = (await request.json()) as RunAgentInput;
-      return runAgent(input);
+      return runAgent(input, apiKey);
     }
 
     return Response.json({ error: "Not found." }, { status: 404 });

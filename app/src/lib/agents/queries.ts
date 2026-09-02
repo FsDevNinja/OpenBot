@@ -70,6 +70,9 @@ export type AgentCapabilities = {
     id: string;
     name: string;
     description: string;
+    authentication: "oauth" | "api-key";
+    runtimeAvailable: boolean;
+    connected: boolean;
     available: boolean;
   }>;
 };
@@ -81,8 +84,8 @@ export function agentCapabilitiesQueryOptions() {
       client("/api/agents/capabilities", "capabilities", {
         fallback: "Could not load what this deployment supports",
       }),
-    // Deployment configuration, not data: it cannot change without the server restarting.
-    staleTime: Number.POSITIVE_INFINITY,
+    // Runtime support is deployment configuration; connection state is the signed-in person's data.
+    staleTime: 30_000,
   });
 }
 

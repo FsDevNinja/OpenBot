@@ -11,7 +11,11 @@ import {
 } from "@langchain/langgraph";
 import { ChatOpenAI } from "@langchain/openai";
 import { serve } from "bun";
-import { hasManagedAgentToken } from "../../shared/agent-authorisation";
+import {
+  hasManagedAgentToken,
+  providerCredentialFrom,
+  providerTypeFrom,
+} from "../../shared/agent-authorisation";
 import { toLangChainMessages } from "./history";
 import { readReasoningEffort } from "./model-options";
 import { streamRun } from "./stream";
@@ -54,8 +58,8 @@ if (!MANAGED_AGENT_TOKEN) {
  * translation. Here it is a name and a key, because the integrations already exist and are
  * maintained by the people whose API it is.
  *
- * Each provider reads its own key. A deployment that only runs Anthropic never needs an OpenAI key,
- * which is the point of making this configurable rather than assuming one vendor.
+ * The provider type is a property of this runtime. Its key is deliberately not: each request
+ * carries the signed-in runner's own key, resolved by OpenBot's server from the encrypted vault.
  *
  * The default is unchanged so the two shipped Bots stay comparable out of the box.
  */
@@ -139,30 +143,9 @@ function defaultModelFor(provider: string): string {
   return "gpt-5.5";
 }
 
-/**
- * The key this provider needs, checked at startup rather than on the first run.
- *
- * Refusing to start matches the computer-token posture:
- * a missing key should fail in front of whoever is deploying, not as a conversation that errors in
- * front of somebody trying to use it.
- */
-const KEY_VARIABLE: Record<string, string> = {
-  openai: "OPENAI_API_KEY",
-  anthropic: "ANTHROPIC_API_KEY",
-  google: "GOOGLE_API_KEY",
-};
-
-const keyVariable = KEY_VARIABLE[PROVIDER];
-if (!keyVariable) {
+if (!["openai", "anthropic", "google"].includes(PROVIDER)) {
   console.error(
     `BOT_PROVIDER=${PROVIDER} is not one this Bot knows. Use openai, anthropic or google.`,
-  );
-  process.exit(1);
-}
-const API_KEY = process.env[keyVariable]?.trim();
-if (!API_KEY) {
-  console.error(
-    `${keyVariable} is not set, and BOT_PROVIDER=${PROVIDER} needs it. This Bot cannot answer without a model.`,
   );
   process.exit(1);
 }
@@ -190,11 +173,11 @@ function toBoundTools(input: RunAgentInput) {
  * Every one of these binds tools the same way and streams the same way, which is exactly why the
  * rest of this file does not know which one it got.
  */
-function buildModel() {
+function buildModel(apiKey: string) {
   if (PROVIDER === "anthropic") {
     return new ChatAnthropic({
       model: MODEL,
-      apiKey: API_KEY,
+      apiKey,
       streaming: true,
       ...(ANTHROPIC_BASE_URL ? { anthropicApiUrl: ANTHROPIC_BASE_URL } : {}),
     });
@@ -202,14 +185,14 @@ function buildModel() {
   if (PROVIDER === "google") {
     return new ChatGoogleGenerativeAI({
       model: MODEL,
-      apiKey: API_KEY,
+      apiKey,
       streaming: true,
       ...(GOOGLE_BASE_URL ? { baseUrl: GOOGLE_BASE_URL } : {}),
     });
   }
   return new ChatOpenAI({
     model: MODEL,
-    apiKey: API_KEY,
+    apiKey,
     streaming: true,
     ...(OPENAI_BASE_URL ? { configuration: { baseURL: OPENAI_BASE_URL } } : {}),
     ...(USE_RESPONSES_API ? { useResponsesApi: true } : {}),
@@ -322,8 +305,8 @@ function callsTheSurface(
  * Now it answers, calls what it needs, reads the results and answers again, which is what a harness
  * is for. `recursionLimit` bounds a model that would otherwise call tools in a circle.
  */
-function buildGraph(input: RunAgentInput) {
-  const model = buildModel();
+function buildGraph(input: RunAgentInput, apiKey: string) {
+  const model = buildModel(apiKey);
   const run = runAssertionOf(input);
 
   const tools = toBoundTools(input);
@@ -384,7 +367,10 @@ function buildGraph(input: RunAgentInput) {
     .compile();
 }
 
-async function runAgent(input: RunAgentInput): Promise<Response> {
+async function runAgent(
+  input: RunAgentInput,
+  apiKey: string,
+): Promise<Response> {
   const encoder = new EventEncoder();
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
@@ -402,7 +388,7 @@ async function runAgent(input: RunAgentInput): Promise<Response> {
       // is reported as RUN_ERROR through the same path as a failure mid-stream.
       await streamRun(
         async () =>
-          buildGraph(input).streamEvents(
+          buildGraph(input, apiKey).streamEvents(
             { messages: toLangChainMessages(input) },
             { version: "v2" },
           ),
@@ -436,6 +422,7 @@ serve({
         model: MODEL,
         framework: "langgraph",
         responsesApi: USE_RESPONSES_API,
+        credentialMode: "user",
       });
     }
 
@@ -443,8 +430,21 @@ serve({
       if (!hasManagedAgentToken(request, MANAGED_AGENT_TOKEN)) {
         return Response.json({ error: "Unauthorized." }, { status: 401 });
       }
+      if (providerTypeFrom(request) !== PROVIDER) {
+        return Response.json(
+          { error: `This runtime serves ${PROVIDER}.` },
+          { status: 400 },
+        );
+      }
+      const apiKey = providerCredentialFrom(request);
+      if (!apiKey) {
+        return Response.json(
+          { error: `Connect ${PROVIDER} in Settings before running an agent.` },
+          { status: 400 },
+        );
+      }
       const input = (await request.json()) as RunAgentInput;
-      return runAgent(input);
+      return runAgent(input, apiKey);
     }
 
     return Response.json({ error: "Not found." }, { status: 404 });

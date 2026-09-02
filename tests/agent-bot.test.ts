@@ -1,12 +1,7 @@
 import { expect, test } from "bun:test";
 import { join } from "node:path";
 
-/**
- * The compose healthcheck asks `/health`, and `/health` answers without consulting the model key.
- * The refusal to run without one therefore has to happen before the server listens: a Bot that
- * cannot answer should not be running, let alone reporting healthy. These spawn the real
- * entrypoint with the environment compose would hand it.
- */
+/** Spawn the real entrypoint with only the environment Compose would hand it. */
 
 async function startBot(environment: Record<string, string>) {
   const proc = Bun.spawn(
@@ -35,16 +30,47 @@ async function startBot(environment: Record<string, string>) {
   return { exitCode, stderr };
 }
 
-test("agent-bot refuses to start when the model key is empty", async () => {
-  // Compose passes `${OPENAI_API_KEY:-}`, so an unset key arrives as an empty
-  // string rather than missing altogether.
-  const { exitCode, stderr } = await startBot({
-    MANAGED_AGENT_TOKEN: "test-token",
-    OPENAI_API_KEY: "",
-  });
+test("agent-bot has no deployment-key fallback for a user's run", async () => {
+  const reservation = Bun.serve({ port: 0, fetch: () => new Response() });
+  const port = reservation.port;
+  await reservation.stop();
+  const proc = Bun.spawn(
+    ["bun", join(import.meta.dir, "..", "agent-bot", "src", "index.ts")],
+    {
+      env: {
+        PATH: process.env.PATH ?? "",
+        PORT: String(port),
+        MANAGED_AGENT_TOKEN: "test-token",
+        OPENAI_API_KEY: "deployment-key-that-must-not-be-read",
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    },
+  );
 
-  expect(exitCode).toBe(1);
-  expect(stderr).toContain("OPENAI_API_KEY is not set");
+  let response: Response | undefined;
+  try {
+    for (let attempt = 0; attempt < 50; attempt += 1) {
+      try {
+        response = await fetch(`http://localhost:${port}/ag-ui`, {
+          method: "POST",
+          headers: { "x-openbot-agent-token": "test-token" },
+          body: "{}",
+        });
+        break;
+      } catch {
+        await Bun.sleep(20);
+      }
+    }
+  } finally {
+    proc.kill();
+    await proc.exited;
+  }
+
+  expect(response?.status).toBe(400);
+  expect(await response?.json()).toEqual({
+    error: "This runtime serves openai.",
+  });
 });
 
 test("agent-bot still refuses to start without its server token", async () => {

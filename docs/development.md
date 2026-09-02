@@ -3,7 +3,7 @@
 ## Setup
 
 Install Docker, [Bun](https://bun.sh) 1.3+, `lsof`, `python3`, and `curl`. Local Codex mode also needs
-the Codex CLI authenticated with `codex login`.
+the Codex CLI; each person authorizes their own ChatGPT account from Settings after startup.
 
 ```sh
 cp .env.example .env
@@ -20,7 +20,7 @@ npx --yes copilotkit@latest license --write
 
 Put the `cpk-...` runtime key from `project select` in `.env` as
 `INTELLIGENCE_API_KEY`. `license --write` writes `COPILOTKIT_LICENSE_TOKEN`.
-Then add `OPENAI_API_KEY`. To use the local ChatGPT account instead, set
+Then add `OPENAI_API_KEY`. To let each person connect a ChatGPT account through Codex instead, set
 `CODEX_AGENT_ENABLED=true` and `AGENT_ENDPOINT_ALLOWED_HOSTS=localhost:4202`; see
 [the Codex provider guide](../agent-codex/README.md).
 

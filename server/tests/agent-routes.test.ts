@@ -11,6 +11,7 @@ import type {
   AgentProfile,
   CreateAgentInput,
 } from "../src/agents/profile-types";
+import { AGENT_PROVIDER_CATALOG } from "../src/agents/providers";
 import { createAgentRoutes, parseAgentInput } from "../src/agents/routes";
 import { createApp } from "../src/app";
 import type { AppVariables, AuthenticatedActor } from "../src/auth/guards";
@@ -293,6 +294,63 @@ describe("agent lifecycle routes", () => {
       ),
     ).toMatchObject({ id: "anthropic", available: false });
     expect(store.calls).toEqual([]);
+  });
+
+  test("publishes provider availability for the authenticated person's connections", async () => {
+    const store = fakeStore();
+    const app = new Hono<{ Variables: AppVariables }>();
+    app.route(
+      "/",
+      createAgentRoutes(
+        store,
+        requireUser,
+        false,
+        undefined,
+        new Set(),
+        undefined,
+        [
+          {
+            ...AGENT_PROVIDER_CATALOG[1],
+            endpoint: new URL("http://localhost:4201/ag-ui"),
+            token: "runtime-token",
+          },
+        ],
+        undefined,
+        {
+          connected: async () => false,
+          credentialFor: async () => null,
+          statuses: async () =>
+            AGENT_PROVIDER_CATALOG.map((provider) => ({
+              ...provider,
+              runtimeAvailable: provider.id === "openai",
+              connected: false,
+              available: false,
+            })),
+        },
+      ),
+    );
+
+    const response = await app.request("http://openbot.test/capabilities");
+    const body = (await json(response)) as {
+      capabilities: {
+        builtInAvailable: boolean;
+        providers: Array<{
+          id: string;
+          runtimeAvailable: boolean;
+          connected: boolean;
+          available: boolean;
+        }>;
+      };
+    };
+
+    expect(body.capabilities.builtInAvailable).toBe(false);
+    expect(
+      body.capabilities.providers.find((provider) => provider.id === "openai"),
+    ).toMatchObject({
+      runtimeAvailable: true,
+      connected: false,
+      available: false,
+    });
   });
 
   test("attaches authentication middleware to every route before calling the store", async () => {

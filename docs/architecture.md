@@ -18,7 +18,7 @@ Regenerate it with `bun run diagram` after changing anything it shows.
 | `agent-computer`         | 4100                       | A Linux desktop, Chromium, terminal, `/workspace`, browser profile, screenshots, snapshots, and file tools.                                 |
 | `agent-bot`              | 4200                       | Proof-of-concept AG-UI Bot.                                                                                                                     |
 | `agent-langgraph`        | 4201                       | LangGraph AG-UI Bot.                                                                                                                        |
-| `agent-codex`            | 4202                       | Optional host-side AG-UI adapter for the locally authenticated Codex app-server.                                                            |
+| `agent-codex`            | 4202                       | Optional host-side AG-UI adapter with an isolated Codex app-server OAuth account per user connection.                                      |
 | `supervisor`             | 4500 host / 4300 container | Creates, stops, resets, and lists per-Bot computer containers.                                                                              |
 | PostgreSQL with pgvector | 5432                       | Product data, audit rows, credentials, policy, grants, channels, and components.                                           |
 | CopilotKit Intelligence  | external                   | Durable threads, memory, and realtime gateway.                                                                                              |
@@ -26,7 +26,7 @@ Regenerate it with `bun run diagram` after changing anything it shows.
 `scripts/start.sh` starts PostgreSQL, `agent-computer`, and the supervisor through Docker Compose,
 then starts `server` and `app` on the host. It normally starts `agent-bot` and `agent-langgraph` in
 Compose too. With `CODEX_AGENT_ENABLED=true`, it skips those two and starts `agent-codex` on the host
-so the adapter can reuse the existing `codex login` session.
+so each person can authorize a separate ChatGPT account from Settings.
 
 The compose file also defines optional SPIRE services. `start.sh` does not start them.
 

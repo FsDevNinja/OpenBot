@@ -55,7 +55,7 @@ A Bot is any endpoint speaking [AG-UI](https://github.com/ag-ui-protocol/ag-ui),
 - Docker, for PostgreSQL and the shipped Bots.
 - [Bun](https://bun.sh) 1.3+, for the app and API server.
 - A CopilotKit Intelligence project and license. A free plan is available, and Intelligence can be self-hosted.
-- Either a model key, or the installed Codex CLI already authenticated with `codex login`. The proof-of-concept Bot uses OpenAI; the LangGraph Bot can use OpenAI, Anthropic, or Google; local Codex mode uses the ChatGPT account on this machine.
+- Either a model key, or the installed Codex CLI with `CODEX_AGENT_ENABLED=true`. The proof-of-concept Bot uses OpenAI; the LangGraph Bot can use OpenAI, Anthropic, or Google; in Codex mode each person authorizes their own ChatGPT account from Settings.
 
 ## Quick start
 
@@ -86,7 +86,7 @@ A Bot is any endpoint speaking [AG-UI](https://github.com/ag-ui-protocol/ag-ui),
 
    - `OPENAI_API_KEY`
 
-   Or, to offer the ChatGPT account already signed in through Codex as an agent provider,
+   Or, to let each user authorize a ChatGPT account through Codex as an agent provider,
    set `CODEX_AGENT_ENABLED=true` and
    `AGENT_ENDPOINT_ALLOWED_HOSTS=localhost:4202`. See
    [agent-codex/README.md](agent-codex/README.md).
@@ -139,6 +139,7 @@ Leave `EMBEDDED_POSTGRES` off and set `DATABASE_URL` to point at a database you 
 | `/bot`               | Direct chat with a Bot; `?agent=<id>` selects one.                 |
 | `/skills`            | Create and enable personal skills.                                 |
 | `/settings`          | Personal profile, avatar, and user preferences.                    |
+| `/settings/providers` | Connect your own model-provider accounts for agents.              |
 | `/admin/credentials` | Store write-only encrypted credentials.                            |
 | `/admin/computers`   | View, stop, and reset Bot computers.                               |
 | `/admin/boundaries`  | Configure browser/file/MCP action policy.                          |
@@ -221,7 +222,7 @@ Settings worth knowing:
 | `COMPUTER_TOKEN`                     | Secret every Bot computer request must present. `start.sh` sets one.      |
 | `SUPERVISOR_TOKEN`                   | Secret the supervisor requires. `start.sh` sets one.                      |
 | `AGENT_TOOL_TOKEN`                   | Secret a Bot presents to call a granted tool back. `start.sh` sets one. Without it no Bot may call tools. |
-| `CODEX_AGENT_ENABLED`                | Offers the host-side Codex provider on port 4202 and skips the two provider-key Bot containers. |
+| `CODEX_AGENT_ENABLED`                | Offers the host-side, per-user OAuth Codex provider on port 4202 and skips the two API-provider runtime containers. |
 | `COMPUTER_SUPERVISOR_URL`            | Gives each Bot a computer of its own instead of one shared computer.      |
 | `COMPUTER_RUNTIME`                   | Set to `runsc` to run computers under gVisor, where the host has it.      |
 | `COMPUTER_SANDBOX`                   | Set to `on` for Chromium's own sandbox, where the host permits it.        |

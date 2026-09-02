@@ -8,7 +8,7 @@ import {
   IconUser,
 } from "@tabler/icons-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useNavigate } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
 import type { ZodType } from "zod";
 import { AbstractAvatar } from "@/components/agents/abstract-avatar";
@@ -71,7 +71,11 @@ import {
   updateAgentAvatarMutationOptions,
   updateAgentMutationOptions,
 } from "@/lib/agents/mutations";
-import { type AgentProfile, agentQueryOptions } from "@/lib/agents/queries";
+import {
+  type AgentProfile,
+  agentCapabilitiesQueryOptions,
+  agentQueryOptions,
+} from "@/lib/agents/queries";
 import { agentPluginsQueryOptions } from "@/lib/plugins/queries";
 import { readToolName } from "@/lib/plugins/tool-name";
 
@@ -682,10 +686,13 @@ function ConnectionSection({
   agentId: string;
   profile: AgentProfile;
 }) {
+  const capabilities = useQuery(agentCapabilitiesQueryOptions());
+  const provider = capabilities.data?.providers.find(
+    (candidate) => candidate.id === profile.provider?.id,
+  );
   /*
-   * A provider-managed agent is done the moment it exists: its provider runtime already holds the
-   * deployment's tool credential, so its tool calls authenticate with no
-   * setup. Showing it the endpoint and the callback-token panel told the person the opposite —
+   * A provider-managed agent has no credential of its own. Each runner supplies their own provider
+   * connection, resolved by the server at run time. Showing it the endpoint and callback-token panel told the person the opposite —
    * an internal address they never typed, and a credential they were never supposed to need.
    */
   if (profile.provider) {
@@ -696,9 +703,21 @@ function ConnectionSection({
         </h2>
         <p className="text-sm">{profile.provider.name}</p>
         <p className="text-sm text-muted-foreground">
-          This deployment manages the provider connection. This agent keeps its
-          own role, channels, grants, and conversation state.
+          This agent uses your {profile.provider.name} connection when you run
+          it. Other people use their own connection, even when the agent is
+          public. Its role, channels, grants, and conversation state stay with
+          the agent.
         </p>
+        {provider && !provider.connected ? (
+          <Button
+            className="w-fit"
+            render={<Link to="/settings/providers" />}
+            size="sm"
+            variant="outline"
+          >
+            Connect {profile.provider.name}
+          </Button>
+        ) : null}
       </section>
     );
   }
