@@ -1,5 +1,6 @@
 import {
   IconArrowLeft,
+  IconCloudCode,
   IconKey,
   IconLayoutGrid,
   IconPlug,
@@ -43,6 +44,11 @@ const ITEMS: {
     title: "AI providers",
     icon: IconKey,
     linkOptions: { to: "/settings/providers" },
+  },
+  {
+    title: "Cloud agents",
+    icon: IconCloudCode,
+    linkOptions: { to: "/settings/cloud-agents" },
   },
   {
     /*

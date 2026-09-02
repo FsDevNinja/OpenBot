@@ -190,6 +190,20 @@
       "when": 1788289811662,
       "tag": "0026_careful_zzzax",
       "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1788315277412,
+      "tag": "0027_bouncy_big_bertha",
+      "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1788350520007,
+      "tag": "0028_cute_talon",
+      "breakpoints": true
     }
   ]
 }

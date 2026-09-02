@@ -1,0 +1,1 @@
+ALTER TABLE "cloud_agent_tasks" ADD COLUMN "model" jsonb;

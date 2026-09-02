@@ -50,6 +50,10 @@ export function toVisibleChatItems(
     if (isToolResult(message)) results.set(message.toolCallId, message.content);
   }
 
+  // A call id is its protocol identity. Ignore a second wrapper around the same call so a legacy
+  // in-memory transcript cannot draw two cards while the durable merge protection handles new data.
+  const seenToolCallIds = new Set<string>();
+
   return messages.flatMap((message): VisibleChatItem[] => {
     if (message.role === "assistant") {
       const items: VisibleChatItem[] = [];
@@ -62,6 +66,8 @@ export function toVisibleChatItems(
         });
       }
       for (const toolCall of message.toolCalls ?? []) {
+        if (seenToolCallIds.has(toolCall.id)) continue;
+        seenToolCallIds.add(toolCall.id);
         /*
          * The call that draws an interface is not a row of its own; the interface is.
          *

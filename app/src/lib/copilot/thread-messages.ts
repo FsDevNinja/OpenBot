@@ -48,6 +48,87 @@ export type StoredThread = {
 const NOTHING: StoredThread = { messages: [], unreadable: 0 };
 
 /**
+ * Add durable history that is not already represented by the live transcript.
+ *
+ * A streamed tool call and its persisted copy can have different outer message ids: the live AG-UI
+ * client uses the tool-call id for its assistant message, while the history reader wraps that same
+ * call in an `assistant-${toolCallId}` message. Message-id-only merging therefore drew the same tool
+ * twice. Tool-call ids are the stable protocol identity, so calls and their results are compared by
+ * that identity while ordinary messages continue to be compared by message id.
+ *
+ * The original array is returned when there is no news. Besides avoiding a state update, that makes
+ * the no-op behavior explicit to callers and tests.
+ */
+export function mergeStoredMessages(
+  current: Message[],
+  stored: ReadonlyArray<Readonly<Message>>,
+): Message[] {
+  const messageIds = new Set(current.map((message) => message.id));
+  const toolCallIds = new Set(
+    current.flatMap((message) =>
+      message.role === "assistant"
+        ? (message.toolCalls ?? []).map((call) => call.id)
+        : [],
+    ),
+  );
+  const toolResultIds = new Set(
+    current.flatMap((message) =>
+      message.role === "tool" && "toolCallId" in message
+        ? [message.toolCallId]
+        : [],
+    ),
+  );
+  const fresh: Message[] = [];
+
+  for (const message of stored) {
+    if (messageIds.has(message.id)) continue;
+
+    let candidate = message as Message;
+    if (message.role === "assistant") {
+      const calls = message.toolCalls ?? [];
+      const unseenCalls = calls.filter((call) => !toolCallIds.has(call.id));
+      const hasContent = Boolean(message.content);
+
+      // A differently named wrapper around calls already on screen carries no new information.
+      if (calls.length > 0 && unseenCalls.length === 0 && !hasContent) continue;
+      if (unseenCalls.length !== calls.length) {
+        candidate = { ...message, toolCalls: unseenCalls } as Message;
+      }
+    } else if (
+      message.role === "tool" &&
+      "toolCallId" in message &&
+      toolResultIds.has(message.toolCallId)
+    ) {
+      continue;
+    }
+
+    fresh.push(candidate);
+    messageIds.add(candidate.id);
+    if (candidate.role === "assistant") {
+      for (const call of candidate.toolCalls ?? []) toolCallIds.add(call.id);
+    } else if (candidate.role === "tool" && "toolCallId" in candidate) {
+      toolResultIds.add(candidate.toolCallId);
+    }
+  }
+
+  return fresh.length === 0 ? current : [...current, ...fresh];
+}
+
+/**
+ * Rebuild a page-load transcript from complete durable history and any newer live replay.
+ *
+ * The connect stream is allowed to resume from a cursor, so even a newly mounted browser can receive
+ * only a suffix or a single message. Durable history owns the conversation's order; semantic merging
+ * then keeps a message that arrived through the live connection before the history read completed.
+ */
+export function restoreThreadMessages(
+  replayed: Message[],
+  stored: Message[],
+): Message[] {
+  return mergeStoredMessages(stored, replayed);
+}
+
+/**
  * The turns that parse, kept in order, and a count of the ones that did not.
  *
  * Exported so it can be tested against real stored shapes without a server. Takes `unknown[]`

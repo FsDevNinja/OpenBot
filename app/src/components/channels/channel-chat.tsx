@@ -28,7 +28,11 @@ import { ConversationProvider } from "@/lib/copilot/conversation";
 import { afterMs, joinWithin } from "@/lib/copilot/join-thread";
 import { repairUnansweredToolCalls } from "@/lib/copilot/repair-history";
 import { stoppedReason } from "@/lib/copilot/stopped-turn";
-import { readThreadMessages } from "@/lib/copilot/thread-messages";
+import {
+  mergeStoredMessages,
+  readThreadMessages,
+  restoreThreadMessages,
+} from "@/lib/copilot/thread-messages";
 import { useSkillCommands } from "@/lib/plugins/skill-commands";
 import { queryClient } from "@/query-client";
 import { newId } from "../../lib/new-id";
@@ -161,13 +165,20 @@ export function ChannelChat({
           channel.threadId,
           runtimeAgentId,
         );
-        // Never overwrite local messages that arrived while history was loading.
-        if (
-          current &&
-          stored.messages.length > 0 &&
-          agent.messages.length === 0
-        ) {
-          agent.setMessages(stored.messages);
+        if (current) {
+          /*
+           * CONNECT REPLAY IS NOT COMPLETE HISTORY. It can resume from a cursor and return only one
+           * message to a new page. The old empty-only guard saw that one and refused to install the
+           * complete durable read, so the conversation blinked and collapsed to the replay fragment.
+           *
+           * Durable history provides the order. Anything newer that arrived live while this read was
+           * in flight is merged after it, so restoring never trades completeness for freshness.
+           */
+          const restored = restoreThreadMessages(
+            agent.messages,
+            stored.messages,
+          );
+          if (restored.length > 0) agent.setMessages(restored);
         }
         /*
          * Said on screen rather than only counted. A turn the history store holds and this app cannot
@@ -201,12 +212,13 @@ export function ChannelChat({
    * than a second subscription means "the sidebar updated" and "the transcript refreshes" are the
    * one signal, and cannot drift apart.
    *
-   * APPENDED BY ID, NOT COMPARED BY LENGTH. The stored history is not the local transcript: it
+   * APPENDED BY IDENTITY, NOT COMPARED BY LENGTH. The stored history is not the local transcript: it
    * keeps only what `readableTurns` can parse, and the local side keeps tool lines the platform
    * does not hand back — so after a headless turn the stored read can be shorter than the screen
-   * and still hold the news. What is new is exactly the messages whose ids this transcript has
-   * never seen; appending them leaves everything local intact, and this tab's own turns echo back
-   * with ids already on screen and append nothing.
+   * and still hold the news. Ordinary messages are identified by message id; tool calls and their
+   * results are identified by tool-call id because the live stream and durable reader can wrap the
+   * same call in differently named assistant messages. Appending only unseen identities leaves
+   * everything local intact, and this tab's own turns echo back without drawing twice.
    *
    * Retried briefly, because the roster is patched when the turn is on record with the runner and
    * the platform's read of the thread can be a beat behind it.
@@ -237,12 +249,9 @@ export function ChannelChat({
             runtimeAgentId,
           );
           const current = agentRef.current;
-          const seen = new Set(current.messages.map((message) => message.id));
-          const fresh = stored.messages.filter(
-            (message) => !seen.has(message.id),
-          );
-          if (fresh.length === 0) continue;
-          current.setMessages([...current.messages, ...fresh]);
+          const merged = mergeStoredMessages(current.messages, stored.messages);
+          if (merged === current.messages) continue;
+          current.setMessages(merged);
           return;
         }
       })();

@@ -29,6 +29,14 @@ import { type ChannelStore, createChannelRoutes } from "./channels/routes";
 import type { ThreadIdentity } from "./channels/thread-identity";
 import { createThreadRoutes } from "./channels/thread-routes";
 import { createThreadReader } from "./channels/thread-status";
+import { createCloudAgentConnectionRoutes } from "./cloud-agents/connection-routes";
+import type { CloudAgentConnectionStore } from "./cloud-agents/connections";
+import type { CloudAgentTaskService } from "./cloud-agents/service";
+import { createCloudAgentTaskRoutes } from "./cloud-agents/task-routes";
+import {
+  CLOUD_DEVELOPMENT_TOOL_NAMES,
+  cloudDevelopmentTools,
+} from "./cloud-agents/tools";
 import { createComponentRoutes } from "./components/routes";
 import type { SandboxedStore } from "./components/sandboxed";
 import { createSandboxedRoutes } from "./components/sandboxed-routes";
@@ -359,6 +367,10 @@ export function createApp(
   onboardingStore?: OnboardingStore,
   /** Each signed-in person's own model-provider accounts. */
   providerConnections?: ProviderConnectionStore,
+  /** Each signed-in person's own external development-worker accounts. */
+  cloudAgentConnections?: CloudAgentConnectionStore,
+  /** Durable external development tasks, always scoped back to their owning person. */
+  cloudAgentTasks?: CloudAgentTaskService,
 ) {
   const app = new Hono<{ Variables: AppVariables }>();
 
@@ -1097,6 +1109,20 @@ export function createApp(
     );
   }
 
+  if (cloudAgentConnections) {
+    app.route(
+      "/api/cloud-agent-providers",
+      createCloudAgentConnectionRoutes(cloudAgentConnections, requireUser),
+    );
+  }
+
+  if (cloudAgentTasks) {
+    app.route(
+      "/api/cloud-agent-tasks",
+      createCloudAgentTaskRoutes(cloudAgentTasks, requireUser),
+    );
+  }
+
   if (channelStore) {
     app.route(
       "/api/channels",
@@ -1160,7 +1186,7 @@ export function createApp(
    * no person behind it. Absent secret means the route does not exist: a deployment that has not
    * configured this refuses rather than accepting anybody who can reach the port.
    */
-  if (pluginStore || computerGateway) {
+  if (pluginStore || computerGateway || cloudAgentTasks) {
     const legacyToken = config.agentToolToken ?? "";
     app.post("/api/agent-tools/call", async (context) => {
       /*
@@ -1227,6 +1253,24 @@ export function createApp(
       }
 
       try {
+        if (cloudAgentTasks && CLOUD_DEVELOPMENT_TOOL_NAMES.has(body.name)) {
+          const tool = cloudDevelopmentTools({
+            service: cloudAgentTasks,
+            run: {
+              botId: verdict.botId,
+              actorId: verdict.actorId,
+              runId: verdict.runId,
+              ...(verdict.threadId ? { threadId: verdict.threadId } : {}),
+              depth: verdict.depth ?? 0,
+            },
+          }).find((candidate) => candidate.name === body.name);
+          if (!tool)
+            throw new Error("That cloud development tool is not available.");
+          return context.json({
+            text: await tool.execute(body.args ?? {}),
+            isError: false,
+          });
+        }
         if (body.name.startsWith(CODEX_COMPUTER_TOOL_PREFIX)) {
           if (!computerGateway) {
             throw new Error(

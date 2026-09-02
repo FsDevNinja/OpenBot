@@ -33,6 +33,14 @@ import { createChannelStore } from "./channels/routes";
 import { websocket as channelSocket } from "./channels/socket";
 import { createStallGuard } from "./channels/stall-guard";
 import { createThreadIdentity } from "./channels/thread-identity";
+import { createCloudAgentConnectionStore } from "./cloud-agents/connections";
+import { createCursorClient } from "./cloud-agents/cursor-client";
+import {
+  createCloudAgentTaskService,
+  startCloudAgentTracker,
+} from "./cloud-agents/service";
+import { createCloudAgentTaskStore } from "./cloud-agents/store";
+import { cloudDevelopmentTools } from "./cloud-agents/tools";
 import { createSandboxedStore } from "./components/sandboxed";
 import { createComponentStore } from "./components/store";
 import {
@@ -182,6 +190,18 @@ const providerConnectionStore = createProviderConnectionStore(
     auditStore: bootAuditStore,
   },
 );
+const cursorClient = createCursorClient();
+const cloudAgentConnectionStore = createCloudAgentConnectionStore(
+  { ...agentVault, auditStore: bootAuditStore },
+  cursorClient,
+);
+const cloudAgentTaskService = createCloudAgentTaskService({
+  store: createCloudAgentTaskStore(database),
+  connections: cloudAgentConnectionStore,
+  cursor: cursorClient,
+  auditStore: bootAuditStore,
+});
+const cloudAgentTracker = startCloudAgentTracker(cloudAgentTaskService);
 const agentProfileStore = createAgentProfileStore(
   database,
   config.agentProviders,
@@ -838,7 +858,10 @@ const copilotRuntime = mountCopilotRuntime(
       route: askTheirOwnPerson,
       auditStore: bootAuditStore,
     });
-    return passing ? [passing, asking] : [asking];
+    const development = (await cloudAgentConnectionStore.hasConnection(actorId))
+      ? cloudDevelopmentTools({ service: cloudAgentTaskService, run })
+      : [];
+    return [...(passing ? [passing] : []), asking, ...development];
   },
   // A run started or ended on a thread; light the channel it belongs to. Fire-and-forget, keyed by
   // thread, and a scratch thread maps to no channel and signals nowhere.
@@ -1099,6 +1122,10 @@ const app = createApp(
   createOnboardingStore(database),
   // Model vendors are account connections, owned by the signed-in person who will run the Bot.
   providerConnectionStore,
+  // Cloud development is a separate capability from the model provider powering a Bot. Each
+  // person connects their own executor account, and every task remains owned by that person.
+  cloudAgentConnectionStore,
+  cloudAgentTaskService,
 );
 
 /**
@@ -1316,6 +1343,7 @@ for (const signal of ["SIGINT", "SIGTERM"] as const) {
       // Started only where handing work between Bots is switched on, so it is often not there.
       workOfferedListener?.stop() ?? Promise.resolve(),
       Promise.resolve(retentionSweeps.stop()),
+      Promise.resolve(cloudAgentTracker.stop()),
     ]).finally(() => process.exit(0));
   });
 }

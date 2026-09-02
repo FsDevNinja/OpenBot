@@ -412,16 +412,10 @@ async function buildAgent(
      * `remote.run(input)` skips it: the endpoint would get a run with no standing role, no holdings
      * message, no tools and no signed assertion, and every one of those failures is silent.
      *
-     * WHICH IS ALSO WHY A REMOTE BOT IS OFFERED NEITHER `message_bot` NOR `ask_person`. Both are
-     * executed here, by the wrapper below, against this deployment's grants and caps. A Bot at an
-     * endpoint runs its own loop and is handed descriptions of tools it may call back for, and the
-     * callback path executes MCP refs only — so a described `message_bot` would be a tool it could
-     * announce and never invoke. Granting one is refused at the door rather than stored dead: see
-     * `enablementRefusal` in plugins/routes.ts.
-     *
-     * Making this work is a feature rather than a fix: the callback would have to carry a run
-     * assertion the endpoint cannot forge, and execute a hop on its behalf. Worth doing; not done
-     * here, and worth knowing it is missing rather than assuming it is not.
+     * A remote Bot is still offered neither `message_bot` nor `ask_person`: those execute inside
+     * this runtime and have no callback dispatcher yet. Cloud development is different. Its tools
+     * deliberately execute through `/api/agent-tools/call`, using the signed run assertion already
+     * carried by remote agents, and are filtered by their `cloud-agent/` ref below.
      */
     return remoteAgentWithStandingRole(
       agent,
@@ -431,6 +425,7 @@ async function buildAgent(
       connectedVendors,
       narrowing ? offeredFor : undefined,
       agentFetch,
+      handoff,
     );
   }
 
@@ -555,6 +550,8 @@ function remoteAgentWithStandingRole(
   narrow?: (input: RunAgentInput) => Promise<GrantedTool[]>,
   /** The fetch this agent is dialled with. See {@link buildAgents}. */
   agentFetch?: AgentFetch,
+  /** Per-run deployment tools such as handoff, escalation, and cloud development. */
+  runTools?: HandoffForRun,
 ) {
   const remote = new HttpAgent({
     url: agent.endpoint,
@@ -691,8 +688,19 @@ function remoteAgentWithStandingRole(
    */
   remote.use((input, next) =>
     defer(() =>
-      from(narrow ? narrow(input) : Promise.resolve(tools)).pipe(
-        switchMap((offered) => runWith(offered, input, next)),
+      from(
+        Promise.all([
+          narrow ? narrow(input) : Promise.resolve(tools),
+          (runTools?.(agent.id, input) ?? Promise.resolve([])).then((tools) =>
+            // Handoff and escalation still execute inside this runtime and cannot be called back by
+            // a remote AG-UI loop. Cloud-agent tools explicitly use the signed callback gateway.
+            tools.filter((tool) => tool.ref.startsWith("cloud-agent/")),
+          ),
+        ]),
+      ).pipe(
+        switchMap(([offered, perRun]) =>
+          runWith([...offered, ...perRun], input, next),
+        ),
       ),
     ),
   );

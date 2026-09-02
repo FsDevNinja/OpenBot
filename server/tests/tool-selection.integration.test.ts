@@ -346,6 +346,47 @@ describe("a built-in Bot", () => {
 });
 
 describe("a remote Bot", () => {
+  test("is offered only the callback-safe cloud development run tools", async () => {
+    const cloudDevelopment = {
+      ...grantedTool("cloud-agent", 0),
+      name: "delegate_development_task",
+      ref: "cloud-agent/delegate_development_task",
+    };
+    const localHandoff = {
+      ...grantedTool("bot", 0),
+      name: "message_bot",
+      ref: "bot/message_bot",
+    };
+    const agents = await buildAgents(
+      [remoteAgent()],
+      model,
+      "test-key",
+      undefined,
+      async () => [],
+      () => "signed-assertion",
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      async () => [cloudDevelopment, localHandoff],
+    );
+
+    await ask(
+      agents.risk as never,
+      "implement the requested repository change",
+    );
+
+    const run = sentToRemote[0];
+    expect(run?.tools).toContain("delegate_development_task");
+    expect(run?.tools).not.toContain("message_bot");
+    expect(run?.forwardedProps?.openbotDeploymentTools).toContain(
+      "delegate_development_task",
+    );
+    expect(run?.forwardedProps?.openbotDeploymentTools).not.toContain(
+      "message_bot",
+    );
+  });
+
   test("is sent the narrowed tools in its run body", async () => {
     answerWith(["slack-digest"]);
     const agents = await buildAgents(

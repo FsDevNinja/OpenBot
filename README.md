@@ -140,6 +140,7 @@ Leave `EMBEDDED_POSTGRES` off and set `DATABASE_URL` to point at a database you 
 | `/skills`            | Create and enable personal skills.                                 |
 | `/settings`          | Personal profile, avatar, and user preferences.                    |
 | `/settings/providers` | Connect your own model-provider accounts for agents.              |
+| `/settings/cloud-agents` | Connect cloud development workers that agents can delegate repository work to. |
 | `/admin/credentials` | Store write-only encrypted credentials.                            |
 | `/admin/computers`   | View, stop, and reset Bot computers.                               |
 | `/admin/boundaries`  | Configure browser/file/MCP action policy.                          |
@@ -159,6 +160,7 @@ Leave `EMBEDDED_POSTGRES` off and set `DATABASE_URL` to point at a database you 
 - **Secrets never enter the transcript**: the trail records that a secret was requested and how long it was, not what it said.
 - **Bring your own agent**: any AG-UI endpoint is a Bot, on a framework or hand-written. Endpoints are validated with the same target checks used for browser navigation, and an auth header is stored write-only.
 - **Use the Codex account already on your machine**: local Codex mode resumes persistent Codex threads and exposes only the tools OpenBot assigned. Calls return through the same grant, policy and audit gateway; Codex-native action surfaces are disabled before app-server turns begin.
+- **Delegate development to Cursor**: each person can connect Cursor Cloud Agents under Settings. Their coworkers can discover that person's available Cursor models, launch work with an explicit model such as Grok 4.6, send follow-up instructions, cancel or check a run, and leave a live transcript card linking to Cursor and the pull request. OpenBot asks for a separate branch and never merges or deploys. See [Cloud development](docs/cloud-development.md).
 - **Give people and Bots their own faces**: upload, replace, or remove PNG, JPEG, and WebP avatars from Settings or the coworker dialog. The same image follows that identity through the sidebar, channels, recipients, handoffs, and profile surfaces.
 - **Components instead of prose**: compiled React components live in `app/src/components/gallery/`, sandboxed ones are authored in `/admin/playground` and published with no deployment. Every call asks the server whether the component exists, is published, and is not withheld from that Bot. Data functions are granted per component.
 - **Governed MCP**: Google Drive and Notion ship in the catalogue, reached as the person asking. The catalogue carries only vendors this deployment stands behind, so adding one is a review of that vendor. Custom servers must pass URL checks; unknown tools and custom-server tools are treated as writes, and a catalogue tool the server advertises but does not name as a write classifies as a read. A Bot is told which connectors exist here and which it holds, so it says it has not been granted one rather than browsing to the vendor's website.

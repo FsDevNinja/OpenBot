@@ -7,6 +7,7 @@ Start with the root [README](../README.md), then use these references:
 - [Development](development.md): local setup, migrations, ports, and quality checks.
 - [Coworkers](coworkers.md): durable Bot profiles, custom avatars, channels, visibility, deletion, and external AG-UI registration.
 - [Local Codex provider](../agent-codex/README.md): persistent Codex threads through OpenBot's governed tool gateway, with an isolated ChatGPT OAuth connection for each OpenBot user.
+- [Cloud development](cloud-development.md): connect Cursor per user and let coworkers start, update, cancel, and track isolated repository work.
 - [Routines](routines.md): standing instructions a Bot runs on a schedule, the worker that fires them, and who they run as.
 - Plugins, one connector per page — what an administrator registers, what each person consents to, and what the failures mean:
   - [Google Drive](plugins/google-drive.md)

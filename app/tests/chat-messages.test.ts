@@ -1,5 +1,5 @@
-import type { Message } from "@ag-ui/core";
 import { describe, expect, test } from "bun:test";
+import type { Message } from "@ag-ui/core";
 import { toVisibleChatItems } from "../src/components/channels/chat-messages";
 
 /**
@@ -95,6 +95,32 @@ describe("toVisibleChatItems", () => {
         id: "call-1",
         toolCall: called.toolCalls?.[0],
         result: "42",
+      },
+    ]);
+  });
+
+  test("draws one card when history contains two wrappers for the same tool call", () => {
+    const toolCall = {
+      id: "call-duplicate",
+      type: "function" as const,
+      function: { name: "delegateToCloudAgent", arguments: "{}" },
+    };
+    const live: Message = {
+      id: "call-duplicate",
+      role: "assistant",
+      toolCalls: [toolCall],
+    };
+    const persisted: Message = {
+      id: "assistant-call-duplicate",
+      role: "assistant",
+      toolCalls: [toolCall],
+    };
+
+    expect(toVisibleChatItems([live, persisted])).toEqual([
+      {
+        kind: "tool",
+        id: "call-duplicate",
+        toolCall,
       },
     ]);
   });

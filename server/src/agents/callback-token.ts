@@ -182,7 +182,7 @@ export function readRunAssertion(
 }
 
 export type CallVerdict =
-  | { ok: true; botId: string; actorId: string }
+  | ({ ok: true } & RunAssertion)
   | { ok: false; status: 401 | 403; reason: string };
 
 /**
@@ -249,5 +249,5 @@ export async function authoriseAgentCall(options: {
     };
   }
 
-  return { ok: true, botId: assertion.botId, actorId: assertion.actorId };
+  return { ok: true, ...assertion };
 }

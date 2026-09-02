@@ -8,6 +8,26 @@ Newest first. `Unreleased` is what is on `main` and not yet tagged.
 
 ## Unreleased
 
+### Coworkers can delegate repository work to a personal Cursor Cloud Agent
+
+Each person can connect their own Cursor Cloud Agents API key under Settings. The key is verified,
+encrypted in the existing credential vault, and never copied into a coworker profile or transcript;
+public coworkers use the connection of the person speaking to them, not their creator's account.
+
+A coworker can read that account's live Cursor model catalogue, start isolated repository work with
+an optional explicit model and effort, follow up in the same cloud workspace, cancel a run, and check
+its durable status. The transcript shows one live card with Cursor, branch, and pull-request links.
+OpenBot asks Cursor to work on a separate branch and open a pull request, but never merges or deploys
+the result.
+
+### Reloading a conversation keeps the whole transcript without drawing tool cards twice
+
+A reconnect can replay only the newest part of a thread. The page briefly showed the complete
+durable history, replaced it with that replay fragment, and then lost the older turns again on the
+next reload. Durable history now supplies the ordering while genuinely newer live messages are
+merged after it. Streamed and persisted wrappers for the same tool call are matched by tool-call id,
+so the same cloud-agent card is not rendered twice.
+
 ### People and Bots can use their own avatars
 
 The signed-in person can upload, replace, or remove a PNG, JPEG, or WebP avatar from Settings. Bot

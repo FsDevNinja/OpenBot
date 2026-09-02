@@ -36,6 +36,7 @@ import { Route as AuthedAdminComponentsIndexRouteImport } from './routes/_authed
 import { Route as AuthedAdminComponentsNameRouteImport } from './routes/_authed/admin/components/$name'
 import { Route as AuthedAdminPluginsIndexRouteImport } from './routes/_authed/admin/plugins/index'
 import { Route as AuthedAdminPluginsKeyRouteImport } from './routes/_authed/admin/plugins/$key'
+import { Route as AuthedSettingsCloudAgentsIndexRouteImport } from './routes/_authed/settings/cloud-agents/index'
 import { Route as AuthedSettingsComponentsGalleryIndexRouteImport } from './routes/_authed/settings/components-gallery/index'
 import { Route as AuthedSettingsComponentsGalleryNameRouteImport } from './routes/_authed/settings/components-gallery/$name'
 import { Route as AuthedSettingsConnectedAccountsIndexRouteImport } from './routes/_authed/settings/connected-accounts/index'
@@ -180,6 +181,12 @@ const AuthedAdminPluginsKeyRoute = AuthedAdminPluginsKeyRouteImport.update({
   path: '/plugins/$key',
   getParentRoute: () => AuthedAdminRouteRoute,
 } as any)
+const AuthedSettingsCloudAgentsIndexRoute =
+  AuthedSettingsCloudAgentsIndexRouteImport.update({
+    id: '/cloud-agents/',
+    path: '/cloud-agents/',
+    getParentRoute: () => AuthedSettingsRouteRoute,
+  } as any)
 const AuthedSettingsComponentsGalleryIndexRoute =
   AuthedSettingsComponentsGalleryIndexRouteImport.update({
     id: '/components-gallery/',
@@ -245,6 +252,7 @@ export interface FileRoutesByFullPath {
   '/agents/': typeof AuthedAppAgentsIndexRoute
   '/admin/components/': typeof AuthedAdminComponentsIndexRoute
   '/admin/plugins/': typeof AuthedAdminPluginsIndexRoute
+  '/settings/cloud-agents/': typeof AuthedSettingsCloudAgentsIndexRoute
   '/settings/components-gallery/': typeof AuthedSettingsComponentsGalleryIndexRoute
   '/settings/connected-accounts/': typeof AuthedSettingsConnectedAccountsIndexRoute
   '/settings/providers/': typeof AuthedSettingsProvidersIndexRoute
@@ -276,6 +284,7 @@ export interface FileRoutesByTo {
   '/agents': typeof AuthedAppAgentsIndexRoute
   '/admin/components': typeof AuthedAdminComponentsIndexRoute
   '/admin/plugins': typeof AuthedAdminPluginsIndexRoute
+  '/settings/cloud-agents': typeof AuthedSettingsCloudAgentsIndexRoute
   '/settings/components-gallery': typeof AuthedSettingsComponentsGalleryIndexRoute
   '/settings/connected-accounts': typeof AuthedSettingsConnectedAccountsIndexRoute
   '/settings/providers': typeof AuthedSettingsProvidersIndexRoute
@@ -312,6 +321,7 @@ export interface FileRoutesById {
   '/_authed/_app/agents/': typeof AuthedAppAgentsIndexRoute
   '/_authed/admin/components/': typeof AuthedAdminComponentsIndexRoute
   '/_authed/admin/plugins/': typeof AuthedAdminPluginsIndexRoute
+  '/_authed/settings/cloud-agents/': typeof AuthedSettingsCloudAgentsIndexRoute
   '/_authed/settings/components-gallery/': typeof AuthedSettingsComponentsGalleryIndexRoute
   '/_authed/settings/connected-accounts/': typeof AuthedSettingsConnectedAccountsIndexRoute
   '/_authed/settings/providers/': typeof AuthedSettingsProvidersIndexRoute
@@ -347,6 +357,7 @@ export interface FileRouteTypes {
     | '/agents/'
     | '/admin/components/'
     | '/admin/plugins/'
+    | '/settings/cloud-agents/'
     | '/settings/components-gallery/'
     | '/settings/connected-accounts/'
     | '/settings/providers/'
@@ -378,6 +389,7 @@ export interface FileRouteTypes {
     | '/agents'
     | '/admin/components'
     | '/admin/plugins'
+    | '/settings/cloud-agents'
     | '/settings/components-gallery'
     | '/settings/connected-accounts'
     | '/settings/providers'
@@ -413,6 +425,7 @@ export interface FileRouteTypes {
     | '/_authed/_app/agents/'
     | '/_authed/admin/components/'
     | '/_authed/admin/plugins/'
+    | '/_authed/settings/cloud-agents/'
     | '/_authed/settings/components-gallery/'
     | '/_authed/settings/connected-accounts/'
     | '/_authed/settings/providers/'
@@ -615,6 +628,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthedAdminPluginsKeyRouteImport
       parentRoute: typeof AuthedAdminRouteRoute
     }
+    '/_authed/settings/cloud-agents/': {
+      id: '/_authed/settings/cloud-agents/'
+      path: '/cloud-agents'
+      fullPath: '/settings/cloud-agents/'
+      preLoaderRoute: typeof AuthedSettingsCloudAgentsIndexRouteImport
+      parentRoute: typeof AuthedSettingsRouteRoute
+    }
     '/_authed/settings/components-gallery/': {
       id: '/_authed/settings/components-gallery/'
       path: '/components-gallery'
@@ -701,6 +721,7 @@ interface AuthedSettingsRouteRouteChildren {
   AuthedSettingsIndexRoute: typeof AuthedSettingsIndexRoute
   AuthedSettingsComponentsGalleryNameRoute: typeof AuthedSettingsComponentsGalleryNameRoute
   AuthedSettingsConnectedAccountsKeyRoute: typeof AuthedSettingsConnectedAccountsKeyRoute
+  AuthedSettingsCloudAgentsIndexRoute: typeof AuthedSettingsCloudAgentsIndexRoute
   AuthedSettingsComponentsGalleryIndexRoute: typeof AuthedSettingsComponentsGalleryIndexRoute
   AuthedSettingsConnectedAccountsIndexRoute: typeof AuthedSettingsConnectedAccountsIndexRoute
   AuthedSettingsProvidersIndexRoute: typeof AuthedSettingsProvidersIndexRoute
@@ -712,6 +733,7 @@ const AuthedSettingsRouteRouteChildren: AuthedSettingsRouteRouteChildren = {
     AuthedSettingsComponentsGalleryNameRoute,
   AuthedSettingsConnectedAccountsKeyRoute:
     AuthedSettingsConnectedAccountsKeyRoute,
+  AuthedSettingsCloudAgentsIndexRoute: AuthedSettingsCloudAgentsIndexRoute,
   AuthedSettingsComponentsGalleryIndexRoute:
     AuthedSettingsComponentsGalleryIndexRoute,
   AuthedSettingsConnectedAccountsIndexRoute:

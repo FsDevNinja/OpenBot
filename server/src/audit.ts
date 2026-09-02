@@ -69,6 +69,9 @@ export const auditEventTypes = [
    */
   "channel.deleted",
   "agent.invoked",
+  "cloud_agent.task_started",
+  "cloud_agent.task_updated",
+  "cloud_agent.task_cancelled",
   /**
    * An address this deployment declined to dial for a Bot, and why.
    *

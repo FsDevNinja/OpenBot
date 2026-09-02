@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { readableTurns } from "../src/lib/copilot/thread-messages";
+import {
+  mergeStoredMessages,
+  readableTurns,
+  restoreThreadMessages,
+} from "../src/lib/copilot/thread-messages";
 
 /**
  * Reading back a conversation that used a tool.
@@ -248,5 +252,94 @@ describe("shapes a real thread contains", () => {
     expect(read.map((m) => m.role)).toEqual(["user", "assistant", "assistant"]);
     expect(read[0]?.content).toBe("one");
     expect(read[2]?.content).toBe("three");
+  });
+});
+
+describe("merging a refreshed thread", () => {
+  test("does not append a persisted wrapper for a tool call already streamed live", () => {
+    const live: Message[] = [
+      {
+        id: "call-1",
+        role: "assistant",
+        toolCalls: [
+          {
+            id: "call-1",
+            type: "function",
+            function: { name: "delegateToCloudAgent", arguments: "{}" },
+          },
+        ],
+      },
+      {
+        id: "call-1-result",
+        role: "tool",
+        toolCallId: "call-1",
+        content: '{"taskId":"task-1"}',
+      },
+    ];
+    const stored: Message[] = [
+      {
+        // The durable reader wraps the same call in a different assistant-message id.
+        id: "assistant-call-1",
+        role: "assistant",
+        toolCalls: live[0]?.role === "assistant" ? live[0].toolCalls : [],
+      },
+      {
+        id: "stored-call-1-result",
+        role: "tool",
+        toolCallId: "call-1",
+        content: '{"taskId":"task-1"}',
+      },
+    ];
+
+    expect(mergeStoredMessages(live, stored)).toBe(live);
+  });
+
+  test("still appends genuinely new stored messages", () => {
+    const live: Message[] = [
+      { id: "user-1", role: "user", content: "start the task" },
+    ];
+    const answer: Message = {
+      id: "assistant-2",
+      role: "assistant",
+      content: "The task is running.",
+    };
+
+    expect(mergeStoredMessages(live, [answer])).toEqual([...live, answer]);
+  });
+
+  test("a partial connect replay cannot replace complete durable history", () => {
+    const first: Message = {
+      id: "user-1",
+      role: "user",
+      content: "first message",
+    };
+    const second: Message = {
+      id: "assistant-1",
+      role: "assistant",
+      content: "second message",
+    };
+
+    expect(restoreThreadMessages([first], [first, second])).toEqual([
+      first,
+      second,
+    ]);
+  });
+
+  test("a live message newer than durable history survives restoration", () => {
+    const stored: Message = {
+      id: "user-1",
+      role: "user",
+      content: "stored",
+    };
+    const live: Message = {
+      id: "assistant-live",
+      role: "assistant",
+      content: "still streaming",
+    };
+
+    expect(restoreThreadMessages([stored, live], [stored])).toEqual([
+      stored,
+      live,
+    ]);
   });
 });
