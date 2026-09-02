@@ -13,20 +13,22 @@ if [ "$(id -u)" -eq 0 ]; then
   pw_gid="$(id -g pwuser)"
   for durable_dir in /profiles /workspace; do
     ownership_marker="$durable_dir/.openbot-owned-${pw_uid}-${pw_gid}"
+    marker_owner="$(stat -c '%u:%g' "$ownership_marker" 2>/dev/null || true)"
     # A fresh volume is root-owned, but everything written after the handoff is already pwuser's.
     # Remember the one recursive migration so a resume does not walk every retained profile and
     # workspace file before the desktop can appear.
-    if [ ! -e "$ownership_marker" ]; then
+    if [ "$marker_owner" != "${pw_uid}:${pw_gid}" ]; then
       chown -R pwuser:pwuser "$durable_dir"
-      touch "$ownership_marker"
-      chown pwuser:pwuser "$ownership_marker"
+      # Create the completion marker as the new owner. If the recursive handoff fails, `set -e`
+      # stops before this point and the next boot retries it instead of trusting a partial migration.
+      runuser -u pwuser -- touch "$ownership_marker"
     else
       chown pwuser:pwuser "$durable_dir" "$ownership_marker"
     fi
   done
   chmod 1777 /tmp/.X11-unix
-  chown pwuser:pwuser /tmp/runtime-pwuser
   chmod 700 /tmp/runtime-pwuser
+  chown pwuser:pwuser /tmp/runtime-pwuser
   exec runuser -u pwuser --preserve-environment -- env \
     HOME=/home/pwuser \
     USER=pwuser \

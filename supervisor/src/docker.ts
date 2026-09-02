@@ -357,8 +357,11 @@ function hostConfig(names: ComputerNames, options: EnsureOptions) {
 
     // No path from inside to more privilege than it started with, whatever it manages to run.
     SecurityOpt: ["no-new-privileges:true"],
-    // Chromium needs none of these, and each is a documented container escape route.
+    // Chromium needs none of these, and each is a documented container escape route. The root
+    // entrypoint keeps only what it needs to hand fresh named volumes to pwuser and switch uid/gid,
+    // then re-execs the desktop as that unprivileged user.
     CapDrop: ["ALL"],
+    CapAdd: ["CHOWN", "SETGID", "SETUID"],
     // A runaway Bot is a resource problem for itself, not for every other Bot on the host.
     ...(options.memoryBytes ? { Memory: options.memoryBytes } : {}),
     PidsLimit: options.pidsLimit ?? 512,

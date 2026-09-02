@@ -140,6 +140,24 @@ describe.skipIf(runtime === null)("a name held by somebody else", () => {
   }, 90_000);
 });
 
+describe.skipIf(runtime === null)("computer confinement", () => {
+  test("retains only the volume-bootstrap capability", async () => {
+    await withDocker().supervisor.ensure(names, {
+      image: IMAGE,
+      environment: [],
+      readyTimeoutMs: 250,
+    });
+
+    const info = await withDocker()
+      .docker.getContainer(names.container)
+      .inspect();
+
+    expect(info.HostConfig?.CapDrop).toEqual(["ALL"]);
+    expect(info.HostConfig?.CapAdd).toEqual(["CHOWN", "SETGID", "SETUID"]);
+    expect(info.HostConfig?.SecurityOpt).toEqual(["no-new-privileges:true"]);
+  }, 90_000);
+});
+
 describe.skipIf(runtime === null)("a computer that never answers", () => {
   test("fails instead of being handed out as ready", async () => {
     // A wait that cannot fail is a sleep: every computer that never came up was reported ready, and
