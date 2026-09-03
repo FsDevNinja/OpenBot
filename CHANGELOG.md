@@ -8,6 +8,21 @@ Newest first. `Unreleased` is what is on `main` and not yet tagged.
 
 ## Unreleased
 
+### Every coworker can hand work to another coworker
+
+Provider-backed and custom AG-UI coworkers can now use the same directional **Bots it may ask**
+grants as Bots that run in OpenBot's native loop. OpenBot sends `message_bot` and `ask_person` as
+deployment-owned run tools and executes their callbacks only after verifying both the Bot credential
+and the short-lived signed run assertion. Bot identity, person, conversation, run depth, visibility,
+fan-out limits and audit attribution therefore remain server decisions rather than arguments a
+remote agent may choose.
+
+The Handoff screen now allows administrators to grant any registered coworker, while missing or
+stale callback credentials still fail closed before a grant is consulted. Existing depth and
+per-run limits are unchanged. The Codex adapter also omits deployment tool names its dynamic-tool
+protocol cannot represent or reserves for native MCP, instead of letting one unusable connector
+operation abort every safe tool in the turn, including handoff.
+
 ### Coworkers can delegate repository work to a personal Cursor Cloud Agent
 
 Each person can connect their own Cursor Cloud Agents API key under Settings. The key is verified,
@@ -99,9 +114,9 @@ render as "Next 5 hours ago").
 
 A coworker running on the deployment's own Bot was nagged for a callback token and shown an
 endpoint form. Its connection tab now says what is true — it runs here, nothing to connect, nothing
-to authenticate. In the same spirit, the handoff panel explains once when a coworker cannot hand
-work on (it runs as its own agent, outside this deployment's loop) instead of offering switches the
-server can only refuse; its existing grants stay visible so they can still be revoked.
+to authenticate. The handoff panel also explains when the deployment has no governed coordination
+gateway instead of offering switches the server can only honor after that gateway is configured;
+existing grants stay visible so they can still be revoked.
 
 ### A channel stops showing a working indicator once its turn has ended
 

@@ -61,15 +61,40 @@ describe("Codex dynamic tools", () => {
     ]);
   });
 
-  test("rejects tool names the Codex dynamic-tool protocol cannot represent", () => {
-    expect(() =>
+  test("omits unrepresentable names without dropping the turn's usable tools", () => {
+    expect(
       dynamicToolsOf(
         input({
-          tools: [{ name: "unsafe tool", description: "No", parameters: {} }],
-          forwardedProps: { openbotDeploymentTools: ["unsafe tool"] },
+          tools: [
+            { name: "unsafe tool", description: "No", parameters: {} },
+            {
+              name: "mcp__github__get_pull",
+              description: "Reserved by Codex",
+              parameters: {},
+            },
+            {
+              name: "message_bot",
+              description: "Ask a coworker",
+              parameters: { type: "object" },
+            },
+          ],
+          forwardedProps: {
+            openbotDeploymentTools: [
+              "unsafe tool",
+              "mcp__github__get_pull",
+              "message_bot",
+            ],
+          },
         }),
       ),
-    ).toThrow("Responses-API safe");
+    ).toEqual([
+      {
+        type: "function",
+        name: "message_bot",
+        description: "Ask a coworker",
+        inputSchema: { type: "object" },
+      },
+    ]);
   });
 
   test("reads the opaque signed run assertion without interpreting it", () => {

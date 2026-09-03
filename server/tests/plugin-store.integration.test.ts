@@ -361,6 +361,26 @@ describe("a grant is the permission", () => {
   });
 });
 
+describe("a provider-backed Bot's handoff grants", () => {
+  test("are returned without requiring the asking Bot to be built in", async () => {
+    const from = `remote_handoff_from_${suite}`;
+    const to = `remote_handoff_to_${suite}`;
+    try {
+      await database.insert(agents).values({
+        id: from,
+        name: "Provider-backed test Bot",
+        type: "remote_ag_ui",
+        configuration: { endpoint: "http://provider.test/ag-ui" },
+      });
+      await store.grant("bot", to, from, "admin@openbot.local");
+      expect(await store.botsReachableFrom(from)).toEqual([to]);
+    } finally {
+      await store.revoke("bot", to, from, "admin@openbot.local");
+      await database.delete(agents).where(eq(agents.id, from));
+    }
+  });
+});
+
 describe("the policy is asked as well as the grant", () => {
   test("a granted tool is still refused by a deny rule, and the rule is named", async () => {
     await store.grant("mcp", ref, holderId, "admin@openbot.local");

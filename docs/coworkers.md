@@ -132,4 +132,15 @@ A coworker's role does not grant capabilities. Capabilities are governed separat
 - personal skills can be attached only to Bots the author owns;
 - deployment skills are managed by administrators.
 
+## Handing work to another coworker
+
+Any registered coworker can be granted other coworkers under **Handoff → Bots it may ask**. The
+grant is directional and administrator-controlled. Built-in coworkers execute the handoff tool in
+the native loop; provider-backed and custom AG-UI coworkers call the same governed tool through the
+signed callback gateway. The receiving coworker runs as the same person with its own role and
+capabilities, and its answer is relayed into the conversation that asked.
+
+The role itself grants nothing. Calling a coworker still requires an exact handoff grant, current
+visibility, and the deployment's depth and per-run fan-out limits.
+
 See [architecture.md](architecture.md).

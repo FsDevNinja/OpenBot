@@ -868,8 +868,8 @@ describe("which Bots a Bot may hand work to", () => {
       enabled: true,
       canGrant: true,
       reachable: ["knowledge"],
-      // No runsHere reader was wired, and a Bot nothing can vouch for is not offered grants.
-      grantable: false,
+      // The signed callback gateway lets both native and provider-backed coworkers coordinate.
+      grantable: true,
     });
   });
 

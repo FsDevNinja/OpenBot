@@ -778,13 +778,13 @@ export function createPluginRoutes(
       /*
        * A grant that could never do anything is refused rather than stored, from both ends.
        *
-       * The GRANTEE has to run here, because handing work on is a tool this deployment executes: a
-       * Bot at an endpoint runs its own loop and is handed descriptions of what it may call back
-       * for, and there is no callback path that would execute a hop.
+       * Both Bots only have to be registered. Built-ins execute `message_bot` in-process;
+       * provider-backed and custom AG-UI Bots receive the same per-run tool description and call it
+       * through the signed deployment callback. In either case the callback reconstructs identity,
+       * thread and depth from the deployment's assertion before the desk checks this exact grant.
        *
-       * The TARGET only has to exist. Being handed work is not the same as being able to hand it on,
-       * so a target at its own endpoint is perfectly ordinary — but `ref` is bare text with no
-       * foreign key, so a typo stored happily and every hop then refused as not-granted.
+       * `ref` is bare text with no foreign key, so both existence checks remain important: a typo
+       * otherwise stores happily and every hop is later refused as not-granted.
        */
       /*
        * A Bot cannot be granted itself. The desk refuses a self-hop outright — "a Bot cannot hand
@@ -793,10 +793,8 @@ export function createPluginRoutes(
       if (ref === agentId) {
         return "A Bot cannot be granted itself to hand work to.";
       }
-      const runsHere = await store.agentRunsHere(agentId);
-      if (runsHere === undefined) return "There is no such Bot.";
-      if (!runsHere) {
-        return `${agentId} runs at its own endpoint, so this deployment cannot offer it a tool for handing work on. Only a Bot that runs here can be given one.`;
+      if (!(await store.agentIsRegistered(agentId))) {
+        return "There is no such Bot.";
       }
       if (!(await store.agentIsRegistered(ref))) {
         return `There is no Bot called ${ref} to hand work to.`;

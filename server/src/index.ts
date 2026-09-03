@@ -2,18 +2,26 @@ import { randomUUID } from "node:crypto";
 import { serve } from "bun";
 import { eq } from "drizzle-orm";
 import { COMPUTER_GUIDANCE } from "../../shared/bot-prompt";
-import { mintRunAssertion, readRunAssertion } from "./agents/callback-token";
+import {
+  mintRunAssertion,
+  readRunAssertion,
+  type RunAssertion,
+} from "./agents/callback-token";
 import { createAgentFetch } from "./agents/endpoint";
-import { askTheirOwnPerson, escalationTool } from "./agents/escalation";
+import {
+  askTheirOwnPerson,
+  ESCALATE_TOOL,
+  escalationTool,
+} from "./agents/escalation";
 import { createHandoffDesk, HANDOFF_KIND } from "./agents/handoff";
 import { createHandoffDelivery } from "./agents/handoff-delivery";
 import { createHandoffRunner } from "./agents/handoff-runner";
-import { handoffTool } from "./agents/handoff-tool";
+import { HANDOFF_TOOL, handoffTool } from "./agents/handoff-tool";
 import { createAgentProfileStore } from "./agents/profile-store";
 import type { AgentActor } from "./agents/profile-types";
 import { createProviderConnectionStore } from "./agents/provider-connections";
 import { createRuntimeAgentLoader } from "./agents/runtime-agents";
-import { createApp } from "./app";
+import { createApp, type AgentRunToolDispatcher } from "./app";
 import { createAuditReader, createAuditStore, recordAuditEvent } from "./audit";
 import { startRetentionSweeps } from "./audit-retention";
 import { createAuth } from "./auth";
@@ -79,7 +87,7 @@ import { useRoutineTools } from "./plugins/builtin-routines";
 import { createComposioConnector } from "./plugins/managed-connector";
 import { redirectUriFor } from "./plugins/oauth";
 import { createPluginStore } from "./plugins/store";
-import { grantedSkills, grantedTools } from "./plugins/tools";
+import { grantedSkills, grantedTools, REFUSAL_MARKER } from "./plugins/tools";
 import { createTurnRunner } from "./routines/run-turn";
 import { createRoutineRunner } from "./routines/runner";
 import { createRoutineStore } from "./routines/store";
@@ -546,11 +554,18 @@ const loadToolsForActor = (actorId: string) => (botId: string) =>
  * neither is read out of the request body any more.
  */
 const signRunForActor =
-  (actorId: string) => (botId: string, runId: string, threadId?: string) =>
-    mintRunAssertion(
-      { botId, actorId, runId, threadId },
+  (actorId: string) =>
+  (botId: string, runId: string, threadId: string, previousRun?: unknown) => {
+    const previous = readRunAssertion(previousRun, config.keyEncryptionKey);
+    const inheritedDepth =
+      previous?.botId === botId && previous.actorId === actorId
+        ? (previous.depth ?? 0)
+        : 0;
+    return mintRunAssertion(
+      { botId, actorId, runId, threadId, depth: inheritedDepth },
       config.keyEncryptionKey,
     );
+  };
 
 /*
  * Which vendors this deployment connects to, held by a Bot or not.
@@ -711,6 +726,90 @@ const buildAgentFor = async ({
 };
 
 /**
+ * Coordination tools for one run, reconstructed entirely from deployment-owned identity.
+ *
+ * This is shared by the in-process loop and the signed callback route. Provider-backed and custom
+ * AG-UI coworkers therefore get the same grant checks, caps, attribution and audit behavior as a
+ * package Bot instead of a second, weaker implementation at the process boundary.
+ */
+async function coordinationToolsFor(run: RunAssertion) {
+  /*
+   * The caps are checked BEFORE the grants query, not inside the tool that would discard it.
+   *
+   * `handoffTool` short-circuits on all three of these, but only after being handed a
+   * `hasSomebodyToAsk` that costs a query. So a deployment which switched the capability off
+   * still paid one grants read per run of every Bot, for a tool it was never going to be offered,
+   * and a run already at the cap paid it again.
+   */
+  const couldHandOn =
+    config.handoff.maxDepth > 0 &&
+    config.handoff.maxPerRun > 0 &&
+    (run.depth ?? 0) < config.handoff.maxDepth;
+
+  const passing = couldHandOn
+    ? handoffTool({
+        desk: handoffDesk,
+        from: run,
+        // Read now rather than at boot, so a grant made a minute ago counts and one revoked a
+        // minute ago stops counting.
+        hasSomebodyToAsk:
+          (
+            await pluginStore
+              .botsReachableFrom(run.botId)
+              .catch(() => [] as string[])
+          ).length > 0,
+        maxDepth: config.handoff.maxDepth,
+        maxPerRun: config.handoff.maxPerRun,
+      })
+    : null;
+
+  /*
+   * The way to stop and ask is offered whether or not there is a Bot to hand to.
+   *
+   * It is the cheaper of the two and the one a Bot should reach for first: asking the person who
+   * is already in the conversation spends nothing and cannot be aimed anywhere they cannot see.
+   */
+  const asking = escalationTool({
+    from: run,
+    route: askTheirOwnPerson,
+    auditStore: bootAuditStore,
+  });
+  return [...(passing ? [passing] : []), asking];
+}
+
+async function runToolsFor(run: RunAssertion) {
+  const coordination = await coordinationToolsFor(run);
+  const development = (await cloudAgentConnectionStore.hasConnection(
+    run.actorId,
+  ))
+    ? cloudDevelopmentTools({ service: cloudAgentTaskService, run })
+    : [];
+  return [...coordination, ...development];
+}
+
+/**
+ * The callback half of coordination tools for provider-backed and custom AG-UI coworkers.
+ *
+ * The caller may choose a tool name and arguments, but not who it is, whose access it uses, where
+ * the answer lands, or how deep the chain is. Those all come from the signed assertion verified by
+ * `/api/agent-tools/call` before this function is reached.
+ */
+const agentRunToolDispatcher: AgentRunToolDispatcher = async (input) => {
+  if (input.name !== HANDOFF_TOOL && input.name !== ESCALATE_TOOL) return null;
+
+  const tool = (await coordinationToolsFor(input.run)).find(
+    (candidate) => candidate.name === input.name,
+  );
+  if (!tool) {
+    return {
+      text: `${REFUSAL_MARKER} This run was not offered that coordination tool.`,
+      isError: true,
+    };
+  }
+  return { text: await tool.execute(input.args), isError: false };
+};
+
+/**
  * The runtime, durable thread store, and the two things beside it a headless turn needs.
  *
  * `agentFor` builds the addressed Bot exactly the way a person's run builds it, and `history` reads
@@ -748,68 +847,13 @@ const nativeRuntime = mountNativeRuntime(
         ?.openbotRun,
       config.keyEncryptionKey,
     );
-    const run = {
+    return runToolsFor({
       botId,
       actorId,
       runId: input.runId,
       threadId: input.threadId,
       depth: from?.depth ?? 0,
-    };
-    /*
-     * The caps are checked BEFORE the grants query, not inside the tool that would discard it.
-     *
-     * `handoffTool` short-circuits on all three of these, but only after being handed a
-     * `hasSomebodyToAsk` that costs a query. So a deployment which switched the capability off
-     * still paid one grants read per run of every Bot, for a tool it was never going to be offered,
-     * and a run already at the cap paid it again.
-     */
-    const couldHandOn =
-      config.handoff.maxDepth > 0 &&
-      config.handoff.maxPerRun > 0 &&
-      run.depth < config.handoff.maxDepth;
-
-    const passing = couldHandOn
-      ? handoffTool({
-          desk: handoffDesk,
-          /*
-           * How deep this run already is comes from the assertion the deployment signed when it handed
-           * this work on. A run a person started carries none, and none means zero.
-           *
-           * NOT `from.botId`. The assertion proves what this run is, and the Bot is whichever one the
-           * runtime is building right now: on a hop those agree, and taking the id from the signed
-           * value rather than from the build would let a stale assertion aim the next hop at the
-           * wrong Bot's grants.
-           */
-          from: run,
-          // Read now rather than at boot, so a grant made a minute ago counts and one revoked a
-          // minute ago stops counting.
-          hasSomebodyToAsk:
-            (
-              await pluginStore
-                .botsReachableFrom(botId)
-                .catch(() => [] as string[])
-            ).length > 0,
-          maxDepth: config.handoff.maxDepth,
-          maxPerRun: config.handoff.maxPerRun,
-        })
-      : null;
-    /*
-     * The way to stop and ask is offered whether or not there is a Bot to hand to.
-     *
-     * It is the cheaper of the two and the one a Bot should reach for first: asking the person who
-     * is already in the conversation spends nothing and cannot be aimed anywhere they cannot see.
-     * A deployment that offered only the expensive exit would push every unanswerable question
-     * sideways into another run.
-     */
-    const asking = escalationTool({
-      from: run,
-      route: askTheirOwnPerson,
-      auditStore: bootAuditStore,
     });
-    const development = (await cloudAgentConnectionStore.hasConnection(actorId))
-      ? cloudDevelopmentTools({ service: cloudAgentTaskService, run })
-      : [];
-    return [...(passing ? [passing] : []), asking, ...development];
   },
   // A run started or ended on a thread; light the channel it belongs to. Fire-and-forget, keyed by
   // thread, and a scratch thread maps to no channel and signals nowhere.
@@ -1098,6 +1142,9 @@ const app = createApp(
     (await nativeThreadStore.exists({ threadId, actorId: userId }))
       ? "known"
       : "unknown",
+  // Provider-backed and custom AG-UI coworkers call per-run coordination tools through the same
+  // signed callback gateway as their connector and cloud-development tools.
+  agentRunToolDispatcher,
 );
 
 /**

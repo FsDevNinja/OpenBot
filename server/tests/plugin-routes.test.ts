@@ -113,14 +113,7 @@ describe("adding a curated server", () => {
  *
  * `kind` also arrives in a JSON body, so a type annotation on it is a comment. It is checked here.
  */
-function grantsApp(
-  role: "admin" | "user" = "admin",
-  runsHere: (agentId: string) => boolean | undefined = (agentId) => {
-    // Undefined is "no such Bot", which is what the store answers for one nobody registered.
-    if (agentId === "never-registered") return undefined;
-    return agentId !== "at-an-endpoint";
-  },
-) {
+function grantsApp(role: "admin" | "user" = "admin") {
   const calls: Array<{ verb: string; kind: string; ref: string }> = [];
   const targets: string[] = [];
   const store = {
@@ -136,7 +129,6 @@ function grantsApp(
     },
     skillOwner: async () => null,
     agentOwner: async () => null,
-    agentRunsHere: async (agentId: string) => runsHere(agentId),
     agentIsRegistered: async (agentId: string) =>
       agentId !== "never-registered",
   };
@@ -411,15 +403,13 @@ describe("granting one Bot to another", () => {
 });
 
 /**
- * A grant that could never do anything.
+ * Provider-backed and custom AG-UI Bots use the signed callback gateway for coordination.
  *
- * Handing work to another Bot is a tool this deployment executes, so it can only be offered to a run
- * this deployment builds. A Bot at its own endpoint runs its own loop and is handed descriptions of
- * what it may call back for; there is no callback path that would execute a hop. Stored anyway, the
- * grant reads as configured and nothing ever happens.
+ * Registration is still required on both ends: the callback makes remote execution possible, but
+ * it does not turn a typo into a Bot or weaken the ordinary grant boundary.
  */
 describe("granting a hop to a Bot that runs somewhere else", () => {
-  test("is refused, and says why", async () => {
+  test("is allowed through the governed callback path", async () => {
     const { calls, app } = grantsApp();
 
     const response = await app.request(
@@ -435,14 +425,12 @@ describe("granting a hop to a Bot that runs somewhere else", () => {
       },
     );
 
-    expect(response.status).toBe(403);
-    expect((await response.json()).error).toContain("its own endpoint");
-    expect(calls).toEqual([]);
+    expect(response.status).toBe(200);
+    expect(calls).toEqual([{ verb: "grant", kind: "bot", ref: "knowledge" }]);
   });
 
   test("a Bot nobody has heard of is refused too", async () => {
-    // Undefined is "no such Bot", which must not read as "runs somewhere else" or as permission.
-    const { calls, app } = grantsApp("admin", () => undefined);
+    const { calls, app } = grantsApp("admin");
 
     const response = await app.request(
       "http://openbot.test/api/plugins/grants",
@@ -462,7 +450,7 @@ describe("granting a hop to a Bot that runs somewhere else", () => {
     expect(calls).toEqual([]);
   });
 
-  test("a Bot that does run here is granted as before", async () => {
+  test("a built-in Bot is granted as before", async () => {
     const { calls, app } = grantsApp();
 
     const response = await app.request(
@@ -486,8 +474,8 @@ describe("granting a hop to a Bot that runs somewhere else", () => {
 /**
  * What a refusal tells somebody who is not an administrator.
  *
- * This route only requires a signed-in user. Checking whether a Bot exists, and whether it runs
- * here, before checking the role handed out three distinguishable 403s and turned the refusal into
+ * This route only requires a signed-in user. Checking whether a Bot exists before checking the role
+ * hands out distinguishable 403s and turns the refusal into
  * an oracle for other people's private Bots — the exact property `handoff.ts` collapses on purpose.
  */
 describe("what a bot grant refusal reveals", () => {
@@ -527,10 +515,12 @@ describe("what a bot grant refusal reveals", () => {
     );
   });
 
-  test("an administrator still gets the reason", async () => {
-    expect((await refusalFor("at-an-endpoint", "admin")).body.error).toContain(
-      "its own endpoint",
-    );
+  test("an administrator may grant a provider-backed Bot and still gets an unknown-Bot refusal", async () => {
+    const remote = await refusalFor("at-an-endpoint", "admin");
+    expect(remote.status).toBe(200);
+    expect(remote.calls).toEqual([
+      { verb: "grant", kind: "bot", ref: "knowledge" },
+    ]);
     expect((await refusalFor("never-registered", "admin")).body.error).toBe(
       "There is no such Bot.",
     );

@@ -303,6 +303,12 @@ is made. It is made on the Bot's own screen: open it from **Agents**, and switch
 so letting them ask each other is two switches. Only an administrator may change it; anyone who can
 see the Bot can read it.
 
+The asking Bot may run in this process or through a configured provider/custom AG-UI endpoint.
+Remote loops receive `message_bot` as a deployment-owned run tool and call it through the signed
+agent-tool callback; the server still decides identity, visibility, destination, depth, fan-out and
+the audit record. A custom endpoint needs its issued callback token, while a managed provider uses
+the deployment's configured callback credential.
+
 With both caps above at zero the screen says the capability is switched off, because a grant made
 then is a row nothing will read.
 

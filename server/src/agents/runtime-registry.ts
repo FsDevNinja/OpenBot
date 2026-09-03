@@ -395,10 +395,10 @@ async function buildAgent(
      * `remote.run(input)` skips it: the endpoint would get a run with no standing role, no holdings
      * message, no tools and no signed assertion, and every one of those failures is silent.
      *
-     * A remote Bot is still offered neither `message_bot` nor `ask_person`: those execute inside
-     * this runtime and have no callback dispatcher yet. Cloud development is different. Its tools
-     * deliberately execute through `/api/agent-tools/call`, using the signed run assertion already
-     * carried by remote agents, and are filtered by their `cloud-agent/` ref below.
+     * Deployment-owned run tools execute through `/api/agent-tools/call`, using the signed run
+     * assertion already carried by remote agents. That includes cloud development and the
+     * coordination tools (`message_bot` and `ask_person`): the callback rebuilds their authority
+     * from the signed run, so the remote loop never gets to choose its Bot, person, thread or depth.
      */
     return remoteAgentWithStandingRole(
       agent,
@@ -653,7 +653,15 @@ function remoteAgentWithStandingRole(
          * one shared secret.
          */
         ...(signRun
-          ? { openbotRun: signRun(agent.id, input.runId, input.threadId) }
+          ? {
+              openbotRun: signRun(
+                agent.id,
+                input.runId,
+                input.threadId,
+                (input.forwardedProps as { openbotRun?: unknown } | undefined)
+                  ?.openbotRun,
+              ),
+            }
           : /*
              * Absent means this deployment cannot sign, so the agent is given nothing to hand back
              * and its tool calls will be refused. That is the right direction to fail: a Bot that
@@ -675,9 +683,11 @@ function remoteAgentWithStandingRole(
         Promise.all([
           narrow ? narrow(input) : Promise.resolve(tools),
           (runTools?.(agent.id, input) ?? Promise.resolve([])).then((tools) =>
-            // Handoff and escalation still execute inside this runtime and cannot be called back by
-            // a remote AG-UI loop. Cloud-agent tools explicitly use the signed callback gateway.
-            tools.filter((tool) => tool.ref.startsWith("cloud-agent/")),
+            tools.filter(
+              (tool) =>
+                tool.ref.startsWith("cloud-agent/") ||
+                tool.ref.startsWith("bot/"),
+            ),
           ),
         ]),
       ).pipe(
@@ -862,6 +872,14 @@ export type SignRun = (
   runId: string,
   /** Which conversation, so a Bot handing work on cannot choose where the answer lands. */
   threadId: string,
+  /**
+   * A prior signed assertion when this run was itself handed over.
+   *
+   * Opaque here: the configuration owner verifies it before carrying its depth into the new
+   * assertion. A remote Bot otherwise gets a freshly signed depth of zero at every hop and can
+   * silently step around the chain limit by crossing the process boundary.
+   */
+  previousRun?: unknown,
 ) => string;
 
 /** Who is asking. Agent visibility is decided per person, so a run has to know this first. */

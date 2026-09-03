@@ -2,7 +2,11 @@ import type { Hono as HonoApp, MiddlewareHandler } from "hono";
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { serveStatic } from "hono/bun";
-import { authoriseAgentCall, sameToken } from "./agents/callback-token";
+import {
+  authoriseAgentCall,
+  type RunAssertion,
+  sameToken,
+} from "./agents/callback-token";
 import type { BotAccessCheck } from "./agents/profile-policy";
 import type { AgentProfileStore } from "./agents/profile-store";
 import { createProviderConnectionRoutes } from "./agents/provider-connection-routes";
@@ -237,6 +241,19 @@ function booleanArgument(
   return value;
 }
 
+/**
+ * A deployment-owned run tool that an external/provider-backed agent may call through the signed
+ * callback gateway.
+ *
+ * Null means the name belongs to another dispatcher. A handled refusal is still a result: the
+ * agent is mid-turn and needs words it can report rather than a transport error that ends the run.
+ */
+export type AgentRunToolDispatcher = (input: {
+  name: string;
+  args: Record<string, unknown>;
+  run: RunAssertion;
+}) => Promise<{ text: string; isError: boolean } | null>;
+
 export function createApp(
   config: DeploymentConfig,
   auth?: AuthService,
@@ -374,6 +391,14 @@ export function createApp(
   cloudAgentTasks?: CloudAgentTaskService,
   /** Whether a remembered native thread still exists for this person. */
   threadReader?: ThreadReader,
+  /**
+   * Deployment-owned run tools that execute outside plugin, computer, and cloud-worker gateways.
+   *
+   * Appended last because createApp is positional. This is the callback half of tools such as
+   * `message_bot`: the runtime advertises a per-run schema, and this handler reconstructs the tool
+   * from the signed run instead of trusting identity, destination, or limits from the request body.
+   */
+  agentRunToolDispatcher?: AgentRunToolDispatcher,
 ) {
   const app = new Hono<{ Variables: AppVariables }>();
 
@@ -1050,8 +1075,6 @@ export function createApp(
                 config.handoff.maxDepth > 0 && config.handoff.maxPerRun > 0,
               reachableFrom: (agentId) =>
                 pluginStore.botsReachableFrom(agentId),
-              // The same answer the write path checks, read up front so the screen can say it once.
-              runsHere: (agentId) => pluginStore.agentRunsHere(agentId),
             }
           : undefined,
         // Providers power coworkers but are not coworkers themselves. The route publishes only
@@ -1180,7 +1203,12 @@ export function createApp(
    * no person behind it. Absent secret means the route does not exist: a deployment that has not
    * configured this refuses rather than accepting anybody who can reach the port.
    */
-  if (pluginStore || computerGateway || cloudAgentTasks) {
+  if (
+    pluginStore ||
+    computerGateway ||
+    cloudAgentTasks ||
+    agentRunToolDispatcher
+  ) {
     const legacyToken = config.agentToolToken ?? "";
     app.post("/api/agent-tools/call", async (context) => {
       /*
@@ -1247,6 +1275,19 @@ export function createApp(
       }
 
       try {
+        const runTool = await agentRunToolDispatcher?.({
+          name: body.name,
+          args: body.args ?? {},
+          run: {
+            botId: verdict.botId,
+            actorId: verdict.actorId,
+            runId: verdict.runId,
+            ...(verdict.threadId ? { threadId: verdict.threadId } : {}),
+            depth: verdict.depth ?? 0,
+          },
+        });
+        if (runTool) return context.json(runTool);
+
         if (cloudAgentTasks && CLOUD_DEVELOPMENT_TOOL_NAMES.has(body.name)) {
           const tool = cloudDevelopmentTools({
             service: cloudAgentTasks,

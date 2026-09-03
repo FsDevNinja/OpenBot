@@ -9,7 +9,7 @@ import {
   EndpointNotAllowedError,
 } from "../src/agents/endpoint";
 import { parseAgentInput } from "../src/agents/routes";
-import { createApp } from "../src/app";
+import { createApp, type AgentRunToolDispatcher } from "../src/app";
 import type { ComputerGateway } from "../src/computer/gateway";
 import { loadConfig } from "../src/config";
 import { remoteComputerToolAliases } from "../src/agents/runtime-registry";
@@ -315,6 +315,108 @@ describe("Codex computer callbacks", () => {
         botId: "codex-assistant",
         actorId: "local-development",
         url: "https://example.com/",
+      },
+    ]);
+  });
+});
+
+describe("provider-backed coordination callbacks", () => {
+  test("dispatches a coordination tool with identity only from the signed run", async () => {
+    const config = loadConfig(
+      testEnvironment({ AGENT_TOOL_TOKEN: "agent-secret" }),
+    );
+    const calls: Parameters<AgentRunToolDispatcher>[0][] = [];
+    const dispatcher: AgentRunToolDispatcher = async (input) => {
+      calls.push(input);
+      return { text: "Handed over to PR Triage.", isError: false };
+    };
+    const app = createApp(
+      config,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      dispatcher,
+    );
+    const run = mintRunAssertion(
+      {
+        botId: "engineering-lead",
+        actorId: "local-development",
+        runId: "run-1",
+        threadId: "thread-1",
+        depth: 0,
+      },
+      config.keyEncryptionKey,
+    );
+
+    const response = await app.request(
+      "http://openbot.test/api/agent-tools/call",
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-openbot-agent-token": "agent-secret",
+        },
+        body: JSON.stringify({
+          name: "message_bot",
+          // These are ordinary tool arguments, not identity. The signed run remains authoritative.
+          args: {
+            bot: "PR Triage",
+            task: "Check the failing build.",
+            actorId: "somebody-else",
+            threadId: "somebody-elses-thread",
+            depth: 99,
+          },
+          run,
+        }),
+      },
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      text: "Handed over to PR Triage.",
+      isError: false,
+    });
+    expect(calls).toEqual([
+      {
+        name: "message_bot",
+        args: {
+          bot: "PR Triage",
+          task: "Check the failing build.",
+          actorId: "somebody-else",
+          threadId: "somebody-elses-thread",
+          depth: 99,
+        },
+        run: {
+          botId: "engineering-lead",
+          actorId: "local-development",
+          runId: "run-1",
+          threadId: "thread-1",
+          depth: 0,
+        },
       },
     ]);
   });

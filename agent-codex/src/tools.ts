@@ -1,5 +1,5 @@
-import type { RunAgentInput } from "@ag-ui/core";
 import { createHash } from "node:crypto";
+import type { RunAgentInput } from "@ag-ui/core";
 
 export type CodexDynamicTool = {
   type: "function";
@@ -20,6 +20,8 @@ type ToolGatewayOptions = {
 };
 
 const TOOL_NAME = /^[A-Za-z0-9_-]{1,64}$/;
+// Codex reserves this namespace for MCP servers it owns; an AG-UI dynamic tool may not claim it.
+const RESERVED_TOOL_PREFIX = "mcp__";
 const DEFAULT_PARAMETERS = { type: "object", properties: {} };
 
 /**
@@ -36,10 +38,18 @@ export function dynamicToolsOf(input: RunAgentInput): CodexDynamicTool[] {
 
   for (const tool of input.tools ?? []) {
     if (!deploymentTools.has(tool.name) || seen.has(tool.name)) continue;
-    if (!TOOL_NAME.test(tool.name)) {
-      throw new Error(
-        `OpenBot tool ${tool.name} cannot be exposed to Codex because its name is not Responses-API safe.`,
-      );
+    /*
+     * One connector operation whose generated namespace is too long must not take every other
+     * capability away from the turn. The Responses API cannot represent this name, so it cannot
+     * be called through Codex; omitting it preserves the usable subset, including coordination
+     * tools such as `message_bot`. OpenBot remains the authority because only names in its signed
+     * deployment allowlist are considered before this protocol-compatibility filter.
+     */
+    if (
+      !TOOL_NAME.test(tool.name) ||
+      tool.name.startsWith(RESERVED_TOOL_PREFIX)
+    ) {
+      continue;
     }
     seen.add(tool.name);
     tools.push({

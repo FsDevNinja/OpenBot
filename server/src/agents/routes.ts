@@ -186,13 +186,6 @@ export function createAgentRoutes(
     enabled: boolean;
     /** The Bots this one may address today, read per call so a revoked grant stops showing. */
     reachableFrom: (agentId: string) => Promise<readonly string[]>;
-    /**
-     * Whether this Bot can be a grantee at all — the handing-on tool executes inside this
-     * deployment's own run loop, so only a Bot that runs in it can be offered one. Exposed so the
-     * screen can say that once, instead of letting every switch fail with the same refusal.
-     * Optional so a caller without a plugin store answers "no" rather than crashing the read.
-     */
-    runsHere?: (agentId: string) => Promise<boolean | undefined>;
   },
   /**
    * Whether a coworker can run on this deployment's own Bot, i.e. be created with no endpoint.
@@ -643,11 +636,10 @@ export function createAgentRoutes(
           // Granting is an administrator's, the same as it is on every other grant.
           canGrant: context.var.actor.role === "admin",
           reachable: handoff ? await handoff.reachableFrom(agentId) : [],
-          // Whether this Bot can hold such a grant at all; the write path refuses one that cannot,
-          // and the screen should say so before a person flips switches that can only bounce.
-          grantable: handoff?.runsHere
-            ? ((await handoff.runsHere(agentId)) ?? false)
-            : false,
+          // The Bot above was resolved through the same permission-filtered store as the roster.
+          // Provider-backed and custom AG-UI coworkers call this deployment's coordination tools
+          // through the signed callback gateway, so running in-process is no longer a prerequisite.
+          grantable: handoff !== undefined,
         },
       });
     } catch (error) {

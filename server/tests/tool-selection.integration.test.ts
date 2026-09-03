@@ -173,13 +173,19 @@ const remoteAgent = (): RegisteredAgent => ({
  * copies a fixed list of its own fields onto a bare object — it knows nothing about a subclass. A
  * wrapper that did not carry its own state across would fail here and nowhere else.
  */
-async function ask(agent: { clone: () => unknown }, text: string) {
+async function ask(
+  agent: { clone: () => unknown },
+  text: string,
+  forwardedProps?: Record<string, unknown>,
+) {
   const running = (agent.clone as () => never)() as unknown as {
     addMessage: (message: unknown) => void;
-    runAgent: () => Promise<unknown>;
+    runAgent: (input?: {
+      forwardedProps?: Record<string, unknown>;
+    }) => Promise<unknown>;
   };
   running.addMessage({ id: `m-${text.length}`, role: "user", content: text });
-  await running.runAgent();
+  await running.runAgent(forwardedProps ? { forwardedProps } : undefined);
 }
 
 /** The tool names in the last request the model actually received for a run (not for pass one). */
@@ -349,7 +355,7 @@ describe("a built-in Bot", () => {
 });
 
 describe("a remote Bot", () => {
-  test("is offered only the callback-safe cloud development run tools", async () => {
+  test("is offered callback-safe cloud development and coordination tools", async () => {
     const cloudDevelopment = {
       ...grantedTool("cloud-agent", 0),
       name: "delegate_development_task",
@@ -381,11 +387,11 @@ describe("a remote Bot", () => {
 
     const run = sentToRemote[0];
     expect(run?.tools).toContain("delegate_development_task");
-    expect(run?.tools).not.toContain("message_bot");
+    expect(run?.tools).toContain("message_bot");
     expect(run?.forwardedProps?.openbotDeploymentTools).toContain(
       "delegate_development_task",
     );
-    expect(run?.forwardedProps?.openbotDeploymentTools).not.toContain(
+    expect(run?.forwardedProps?.openbotDeploymentTools).toContain(
       "message_bot",
     );
   });
@@ -426,18 +432,26 @@ describe("a remote Bot", () => {
      * happened.
      */
     answerWith(["slack-digest"]);
+    let previousRun: unknown;
     const agents = await buildAgents(
       [remoteAgent()],
       model,
       "test-key",
       undefined,
       async () => granted,
-      () => "signed-assertion",
+      (_botId, _runId, _threadId, inherited) => {
+        previousRun = inherited;
+        return "signed-assertion";
+      },
       undefined,
       undefined,
       selection(),
     );
-    await ask(agents.risk as never, "summarise the Slack channel");
+    // A handed-over run arrives with a signed assertion whose depth must survive re-signing for the
+    // remote endpoint. The signer owns verification; this layer must carry the opaque value to it.
+    await ask(agents.risk as never, "summarise the Slack channel", {
+      openbotRun: "parent-signed-assertion",
+    });
 
     const run = sentToRemote[0];
     expect(run?.messages?.[0]?.id).toBe("standing-role:risk");
@@ -449,6 +463,7 @@ describe("a remote Bot", () => {
     expect(String(holdings?.content ?? "")).not.toContain("drive: tool_0");
     expect(run?.forwardedProps?.openbotBotId).toBe("risk");
     expect(run?.forwardedProps?.openbotRun).toBe("signed-assertion");
+    expect(previousRun).toBe("parent-signed-assertion");
     // The deployment-run list has to be the narrowed set too, or the Bot is told this side executes
     // a tool it was never offered.
     expect(run?.forwardedProps?.openbotDeploymentTools).toContain(
