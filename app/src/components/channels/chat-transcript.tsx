@@ -23,11 +23,13 @@ import {
   useMessageScroller,
 } from "@/components/ui/message-scroller";
 import { Skeleton } from "@/components/ui/skeleton";
+import { BrowserSessionCard } from "@/components/computer/browser-session-card";
 import { markdownComponents } from "@/lib/markdown";
 import { EASE_OUT, ENTRANCE_SECONDS } from "@/lib/motion";
 import { readToolName } from "@/lib/plugins/tool-name";
 import { asText, forDisplay, REFUSAL_MARKER } from "@/lib/plugins/tool-result";
 import { toVisibleChatItems } from "./chat-messages";
+import { groupBrowserSessions } from "./browser-sessions";
 import type { QueuedMessage } from "./composer";
 import { ToolRenderBoundary } from "./tool-boundary";
 import { ToolLine } from "./tool-line";
@@ -637,7 +639,7 @@ export function ChatTranscript({
    * cost was markdown parsing and chart SVGs, and those are skipped by the memoised children below,
    * which is where the 25x came from. This runs per render and is not worth guarding.
    */
-  const items = toVisibleChatItems(messages);
+  const items = groupBrowserSessions(toVisibleChatItems(messages), busy);
 
   /*
    * ONLY WHILE THERE IS NOTHING ELSE TO LOOK AT. Once a reply starts streaming, or a tool line
@@ -692,7 +694,11 @@ export function ChatTranscript({
             {/* Instead of the rows, never alongside them: one real message and this is a lie. */}
             {items.length === 0 && restoring ? <RestoringTranscript /> : null}
             {items.map((item, index) =>
-              item.kind === "tool" ? (
+              item.kind === "browser" ? (
+                <MessageScrollerItem key={item.id} messageId={item.id}>
+                  <BrowserSessionCard session={item} />
+                </MessageScrollerItem>
+              ) : item.kind === "tool" ? (
                 <MessageScrollerItem key={item.id} messageId={item.id}>
                   <TranscriptToolCall
                     args={item.toolCall.function.arguments}

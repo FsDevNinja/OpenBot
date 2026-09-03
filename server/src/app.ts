@@ -49,6 +49,10 @@ import { createSandboxedRoutes } from "./components/sandboxed-routes";
 import type { ComponentStore } from "./components/store";
 import type { ActionActor, ComputerGateway } from "./computer/gateway";
 import type { PageFrameStore } from "./computer/page-frames";
+import {
+  captureProviderPageFrame,
+  PROVIDER_BROWSER_TOOLS,
+} from "./computer/capture-page-frame";
 import type { PolicyStore } from "./computer/policy-store";
 import { createComputerRoutes } from "./computer/routes";
 import { configuredAuthProviders, type DeploymentConfig } from "./config";
@@ -91,6 +95,79 @@ async function recordPersonEvent(
 }
 
 const CODEX_COMPUTER_TOOL_PREFIX = "openbot_computer_";
+/** Leave room for both network hops and the model's reply before the 60 second stall guard. */
+const PROVIDER_HELP_WAIT_MS = 45_000;
+const PROVIDER_HELP_POLL_MS = 1_000;
+
+async function pauseForProviderHelp(ms: number, signal?: AbortSignal) {
+  if (signal?.aborted) return;
+  await new Promise<void>((resolve) => {
+    const finish = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", finish);
+      resolve();
+    };
+    const timer = setTimeout(finish, ms);
+    signal?.addEventListener("abort", finish, { once: true });
+  });
+}
+
+async function providerControlState(
+  gateway: ComputerGateway,
+  botId: string,
+  timeoutMs: number,
+  signal?: AbortSignal,
+) {
+  if (signal?.aborted) return null;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let stopWaiting = () => {};
+  try {
+    const expired = new Promise<null>((resolve) => {
+      stopWaiting = () => resolve(null);
+      timer = setTimeout(stopWaiting, timeoutMs);
+      signal?.addEventListener("abort", stopWaiting, { once: true });
+    });
+    return await Promise.race([gateway.control(botId), expired]);
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener("abort", stopWaiting);
+  }
+}
+
+/**
+ * Keep the provider tool open while a person takes and returns the wheel.
+ *
+ * The request itself remains on the computer for ten minutes. This shorter bridge wait is bounded
+ * by the provider callback transport: if nobody answers in time, Codex is told to stop its turn and
+ * the visible request stays available for the person rather than being cancelled behind their back.
+ */
+async function waitForProviderHelp(
+  gateway: ComputerGateway,
+  botId: string,
+  deadline: number,
+  signal?: AbortSignal,
+): Promise<"answered" | "cancelled" | "human-driving" | "waiting"> {
+  let humanDrove = false;
+  while (Date.now() < deadline && !signal?.aborted) {
+    const state = await providerControlState(
+      gateway,
+      botId,
+      deadline - Date.now(),
+      signal,
+    );
+    if (!state) break;
+    if (state.holder === "human") humanDrove = true;
+    if (humanDrove && state.holder === "bot" && !state.requested) {
+      return "answered";
+    }
+    if (!humanDrove && state.holder === "bot" && !state.requested) {
+      return "cancelled";
+    }
+    await pauseForProviderHelp(PROVIDER_HELP_POLL_MS, signal);
+  }
+  if (signal?.aborted) return "cancelled";
+  return humanDrove ? "human-driving" : "waiting";
+}
 
 /**
  * Execute a Codex computer alias through the same gateway used by the browser tools.
@@ -163,6 +240,32 @@ async function callCodexComputerTool(
         actor,
         deltaY === undefined ? {} : { deltaY },
       );
+    }
+    case "computer_request_help": {
+      const reason = stringArgument(args, "reason").trim();
+      const deadline = Date.now() + PROVIDER_HELP_WAIT_MS;
+      await gateway.requestHelp(
+        botId,
+        actor,
+        reason || "The assistant needs a person to continue.",
+      );
+      const outcome = await waitForProviderHelp(
+        gateway,
+        botId,
+        deadline,
+        signal,
+      );
+      return {
+        outcome,
+        result:
+          outcome === "answered"
+            ? "The person finished and handed control back. Take a fresh snapshot and continue."
+            : outcome === "human-driving"
+              ? "The person still has control. Stop this turn and wait for their next message after they hand it back."
+              : outcome === "waiting"
+                ? "Nobody took control yet. The request remains visible. Stop this turn and wait for the person's next message."
+                : "The help request was cleared. Tell the person what you still need.",
+      };
     }
     case "computer_list_files": {
       const path = optionalStringArgument(args, "path");
@@ -1330,8 +1433,30 @@ export function createApp(
             result && typeof result === "object" && !Array.isArray(result)
               ? { ok: true, ...result }
               : { ok: true, result };
+          const page =
+            result && typeof result === "object"
+              ? (result as Record<string, unknown>)
+              : {};
+          const frame =
+            PROVIDER_BROWSER_TOOLS.has(body.name) &&
+            !context.req.raw.signal.aborted
+              ? await captureProviderPageFrame(
+                  computerGateway,
+                  pageFrames,
+                  verdict.botId,
+                  {
+                    ...(typeof page.url === "string" ? { url: page.url } : {}),
+                    ...(typeof page.title === "string"
+                      ? { title: page.title }
+                      : {}),
+                  },
+                )
+              : undefined;
           return context.json({
-            text: JSON.stringify(outcome),
+            text: JSON.stringify({
+              ...outcome,
+              ...(frame ? { pageFrame: frame } : {}),
+            }),
             isError: false,
           });
         }

@@ -237,6 +237,88 @@ body {
   }
 }
 
+/*
+ * Generated Bot faces have quiet idle life without implying that a Bot is working. The body moves
+ * by less than two percent while the eyes carry most of the expression. Run state remains the
+ * separate three-dot badge. Uploaded GIFs render as ordinary images and own their animation.
+ */
+.openbot-generated-avatar {
+  display: block;
+  overflow: hidden;
+}
+
+.openbot-avatar-silhouette {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: openbot-avatar-breathe var(--avatar-breathe-duration) ease-in-out
+    infinite;
+}
+
+.openbot-avatar-gaze {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: openbot-avatar-gaze var(--avatar-gaze-duration) ease-in-out
+    infinite;
+}
+
+.openbot-avatar-eye {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: openbot-avatar-blink var(--avatar-blink-duration) ease-in-out
+    var(--avatar-blink-delay) infinite;
+}
+
+.openbot-avatar-eye-right {
+  animation-delay: calc(var(--avatar-blink-delay) + 40ms);
+}
+
+@keyframes openbot-avatar-breathe {
+  0%,
+  100% {
+    transform: translateY(0) scale(1);
+  }
+  50% {
+    transform: translateY(-1.2px) scale(1.012, 0.992);
+  }
+}
+
+@keyframes openbot-avatar-gaze {
+  0%,
+  18%,
+  100% {
+    transform: translate(0, 0);
+  }
+  34%,
+  48% {
+    transform: translate(2.2px, -0.7px);
+  }
+  64%,
+  79% {
+    transform: translate(-1.6px, 0.8px);
+  }
+}
+
+@keyframes openbot-avatar-blink {
+  0%,
+  43%,
+  48%,
+  100% {
+    transform: scaleY(1);
+  }
+  45%,
+  46% {
+    transform: scaleY(0.08);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .openbot-avatar-silhouette,
+  .openbot-avatar-gaze,
+  .openbot-avatar-eye {
+    animation: none;
+  }
+}
+
 .tool-line[open] .tool-line-chevron {
   transform: rotate(90deg);
 }

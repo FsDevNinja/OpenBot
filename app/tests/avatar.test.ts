@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { avatarFileError, MAX_AVATAR_BYTES } from "@/lib/avatar";
 
 describe("avatar file selection", () => {
-  test.each(["image/png", "image/jpeg", "image/webp"])(
+  test.each(["image/png", "image/jpeg", "image/webp", "image/gif"])(
     "accepts %s within the upload limit",
     (type) => {
       expect(avatarFileError({ size: MAX_AVATAR_BYTES, type })).toBeNull();

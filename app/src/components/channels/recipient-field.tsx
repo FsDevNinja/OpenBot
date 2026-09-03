@@ -59,6 +59,9 @@ export function RecipientField({
               participantImages={[
                 profileById.get(recipient.id)?.avatarUrl ?? null,
               ]}
+              participantPresets={[
+                profileById.get(recipient.id)?.avatarPreset ?? null,
+              ]}
               size={16}
             />
             {recipient.name}
@@ -100,6 +103,7 @@ export function RecipientField({
                 <ChannelAvatar
                   participantIds={[profile.id]}
                   participantImages={[profile.avatarUrl]}
+                  participantPresets={[profile.avatarPreset ?? null]}
                   size={18}
                 />
                 <span>{profile.name}</span>

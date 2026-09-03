@@ -16,7 +16,11 @@ import {
   AgentNotFoundError,
   type AgentProfileStore,
 } from "../agents/profile-store";
-import type { AgentActor, AgentProfile } from "../agents/profile-types";
+import type {
+  AgentActor,
+  AgentAvatarPreset,
+  AgentProfile,
+} from "../agents/profile-types";
 import { type AuditStore, recordAuditEvent } from "../audit";
 import type { AppVariables } from "../auth/guards";
 import type { Database } from "../db/client";
@@ -45,6 +49,8 @@ export type AgentChannel = {
 
 /** A channel plus the last thing said in it, which is what a roster renders. */
 export type ChannelSummary = AgentChannel & {
+  /** Selected generated presets, parallel to agentIds. */
+  avatarPresets: Array<AgentAvatarPreset | null>;
   /** Parallel to agentIds, without copying image payloads into every roster row. */
   hasCustomAvatars: boolean[];
   /** Content version source for immutable avatar URLs, parallel to agentIds. */
@@ -481,6 +487,8 @@ export function createChannelStore(
           id: channels.id,
           name: channels.name,
           agentId: channelAgents.agentId,
+          avatarPresetShape: agentProfiles.avatarPresetShape,
+          avatarPresetColor: agentProfiles.avatarPresetColor,
           hasAvatarImage: sql<boolean>`${agentProfiles.avatarImage} is not null`,
           avatarUpdatedAt: agentProfiles.updatedAt,
           threadId: channelThreads.threadId,
@@ -534,6 +542,7 @@ export function createChannelStore(
         const summary = summaries.get(row.id);
         if (summary) {
           summary.agentIds.push(row.agentId);
+          summary.avatarPresets.push(avatarPresetFrom(row));
           summary.hasCustomAvatars.push(row.hasAvatarImage);
           summary.avatarUpdatedAts.push(row.avatarUpdatedAt);
           summary.active &&= row.deletedAt === null;
@@ -543,6 +552,7 @@ export function createChannelStore(
           id: row.id,
           name: row.name,
           agentIds: [row.agentId],
+          avatarPresets: [avatarPresetFrom(row)],
           hasCustomAvatars: [row.hasAvatarImage],
           avatarUpdatedAts: [row.avatarUpdatedAt],
           threadId: row.threadId,
@@ -1204,6 +1214,7 @@ function channelDto(channel: AgentChannel): AgentChannel {
 function channelSummaryDto(channel: ChannelSummary) {
   return {
     ...channelDto(channel),
+    avatarPresets: channel.avatarPresets,
     avatarUrls: channel.agentIds.map((agentId, index) =>
       channel.hasCustomAvatars[index]
         ? `/api/agents/${encodeURIComponent(agentId)}/avatar/image?v=${channel.avatarUpdatedAts[index]?.getTime().toString(36)}`
@@ -1218,6 +1229,15 @@ function channelSummaryDto(channel: ChannelSummary) {
     // Serialised as ISO-8601 like lastMessageAt, so the browser can compare the two as strings.
     lastReadAt: channel.lastReadAt?.toISOString() ?? null,
   };
+}
+
+function avatarPresetFrom(row: {
+  avatarPresetShape: number | null;
+  avatarPresetColor: number | null;
+}): AgentAvatarPreset | null {
+  return row.avatarPresetShape === null || row.avatarPresetColor === null
+    ? null
+    : { shape: row.avatarPresetShape, color: row.avatarPresetColor };
 }
 
 function mapStoreError(context: Context, error: unknown): Response {

@@ -1,0 +1,5 @@
+ALTER TABLE "agent_profiles" ADD COLUMN "avatar_preset_shape" integer;--> statement-breakpoint
+ALTER TABLE "agent_profiles" ADD COLUMN "avatar_preset_color" integer;--> statement-breakpoint
+ALTER TABLE "agent_profiles" ADD CONSTRAINT "agent_profiles_avatar_preset_pair" CHECK (("agent_profiles"."avatar_preset_shape" is null) = ("agent_profiles"."avatar_preset_color" is null));--> statement-breakpoint
+ALTER TABLE "agent_profiles" ADD CONSTRAINT "agent_profiles_avatar_preset_shape_range" CHECK ("agent_profiles"."avatar_preset_shape" is null or "agent_profiles"."avatar_preset_shape" between 0 and 7);--> statement-breakpoint
+ALTER TABLE "agent_profiles" ADD CONSTRAINT "agent_profiles_avatar_preset_color_range" CHECK ("agent_profiles"."avatar_preset_color" is null or "agent_profiles"."avatar_preset_color" between 0 and 10);

@@ -4,8 +4,8 @@ import { eq } from "drizzle-orm";
 import { COMPUTER_GUIDANCE } from "../../shared/bot-prompt";
 import {
   mintRunAssertion,
-  readRunAssertion,
   type RunAssertion,
+  readRunAssertion,
 } from "./agents/callback-token";
 import { createAgentFetch } from "./agents/endpoint";
 import {
@@ -21,7 +21,12 @@ import { createAgentProfileStore } from "./agents/profile-store";
 import type { AgentActor } from "./agents/profile-types";
 import { createProviderConnectionStore } from "./agents/provider-connections";
 import { createRuntimeAgentLoader } from "./agents/runtime-agents";
-import { createApp, type AgentRunToolDispatcher } from "./app";
+import {
+  type IdentifyActor,
+  resolveRuntimeAgents,
+  type ToolSelection,
+} from "./agents/runtime-registry";
+import { type AgentRunToolDispatcher, createApp } from "./app";
 import { createAuditReader, createAuditStore, recordAuditEvent } from "./audit";
 import { startRetentionSweeps } from "./audit-retention";
 import { createAuth } from "./auth";
@@ -70,11 +75,6 @@ import {
 } from "./computer/socket-proxy";
 import { loadConfig } from "./config";
 import {
-  type IdentifyActor,
-  resolveRuntimeAgents,
-  type ToolSelection,
-} from "./agents/runtime-registry";
-import {
   createCredentialAdminService,
   createCredentialStore,
   resolveModelApiKey,
@@ -91,10 +91,10 @@ import { grantedSkills, grantedTools, REFUSAL_MARKER } from "./plugins/tools";
 import { createTurnRunner } from "./routines/run-turn";
 import { createRoutineRunner } from "./routines/runner";
 import { createRoutineStore } from "./routines/store";
-import { mountNativeRuntime } from "./runtime/native-runtime";
-import { createNativeThreadStore } from "./runtime/thread-store";
 import { createIntentRouter } from "./routing/classify";
 import { createModelCompleter } from "./routing/model";
+import { mountNativeRuntime } from "./runtime/native-runtime";
+import { createNativeThreadStore } from "./runtime/thread-store";
 import {
   createPackageStatusReader,
   loadTenantPackage,
@@ -1183,6 +1183,9 @@ const asChannelSocket = (ws: { data: SocketData }) =>
 
 serve<SocketData>({
   port,
+  // Provider takeover callbacks may wait up to 45 seconds for a person to hand the wheel back.
+  // Bun defaults to 10 seconds, which cuts that governed flow off before the UI can answer it.
+  idleTimeout: 70,
   async fetch(request, server) {
     const url = new URL(request.url);
     const computerSocket = parseComputerSocketPath(url.pathname);

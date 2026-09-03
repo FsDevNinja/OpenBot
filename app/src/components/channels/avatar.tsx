@@ -1,5 +1,6 @@
-import Avatar from "boring-avatars";
 import { memo } from "react";
+import { GeneratedBotAvatar } from "@/components/agents/generated-bot-avatar";
+import type { BotAvatarPreset } from "@/lib/avatar-preset";
 import { cn } from "@/lib/utils";
 
 /**
@@ -15,12 +16,15 @@ import { cn } from "@/lib/utils";
 export const ChannelAvatar = memo(function ChannelAvatar({
   participantIds,
   participantImages,
+  participantPresets,
   size = 32,
   typing = false,
 }: {
   participantIds: string[];
   /** Parallel to participantIds when a server-owned avatar is available. */
   participantImages?: (string | null)[];
+  /** Parallel to participantIds when a generated preset was selected. */
+  participantPresets?: Array<BotAvatarPreset | null>;
   size?: number;
   typing?: boolean;
 }) {
@@ -30,6 +34,7 @@ export const ChannelAvatar = memo(function ChannelAvatar({
     channelSize === 1 ? (
       <AvatarFace
         image={participantImages?.[0]}
+        preset={participantPresets?.[0]}
         seed={participantIds[0]}
         size={size}
       />
@@ -47,6 +52,7 @@ export const ChannelAvatar = memo(function ChannelAvatar({
           >
             <AvatarFace
               image={participantImages?.[i]}
+              preset={participantPresets?.[i]}
               seed={c}
               size={size / (shown.length / 2)}
             />
@@ -65,17 +71,19 @@ export const ChannelAvatar = memo(function ChannelAvatar({
 
 function AvatarFace({
   image,
+  preset,
   seed,
   size,
 }: {
   image?: string | null;
+  preset?: BotAvatarPreset | null;
   seed: string;
   size: number;
 }) {
   return image ? (
     <img alt="" className="size-full rounded-full object-cover" src={image} />
   ) : (
-    <Avatar className="size-full" name={seed} size={size} />
+    <GeneratedBotAvatar preset={preset} seed={seed} size={size} />
   );
 }
 

@@ -8,6 +8,7 @@ export function AgentCard({ agent }: { agent: AgentProfile }) {
         <AbstractAvatar
           image={agent.avatarUrl}
           name={agent.name}
+          preset={agent.avatarPreset}
           seed={agent.avatarSeed}
           size={250}
         />

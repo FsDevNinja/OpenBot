@@ -141,6 +141,7 @@ export function HandoffPanel({ agentId }: { agentId: string }) {
                 <AbstractAvatar
                   image={candidate.avatarUrl}
                   name={candidate.name}
+                  preset={candidate.avatarPreset}
                   seed={candidate.avatarSeed}
                   size={28}
                 />

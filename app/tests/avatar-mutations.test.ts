@@ -1,6 +1,9 @@
 import { afterEach, expect, test } from "bun:test";
 import type { QueryClient } from "@tanstack/react-query";
-import { updateAgentAvatarMutationOptions } from "@/lib/agents/mutations";
+import {
+  updateAgentAvatarMutationOptions,
+  updateAgentAvatarPresetMutationOptions,
+} from "@/lib/agents/mutations";
 import { updateCurrentUserAvatarMutationOptions } from "@/lib/auth/mutations";
 
 const realFetch = globalThis.fetch;
@@ -44,6 +47,33 @@ test("a coworker upload writes the avatar route and refreshes profile and roster
   expect(requests[0]?.init?.method).toBe("PUT");
   expect(JSON.parse(String(requests[0]?.init?.body))).toEqual({
     image: variables.image,
+  });
+  expect(invalidated).toEqual([
+    { queryKey: ["agents"] },
+    { queryKey: ["channels"] },
+  ]);
+});
+
+test("a coworker preset writes the same identity route and refreshes every face", async () => {
+  const { invalidated, queryClient, requests } = harness({ agent: {} });
+  const options = updateAgentAvatarPresetMutationOptions(queryClient);
+  const variables = {
+    agentId: "agent-1",
+    preset: { shape: 7, color: 10 },
+  };
+
+  await options.mutationFn?.(variables);
+  await options.onSuccess?.(
+    {} as never,
+    variables,
+    undefined as never,
+    undefined as never,
+  );
+
+  expect(requests[0]?.url).toBe("/api/agents/agent-1/avatar");
+  expect(requests[0]?.init?.method).toBe("PUT");
+  expect(JSON.parse(String(requests[0]?.init?.body))).toEqual({
+    preset: variables.preset,
   });
   expect(invalidated).toEqual([
     { queryKey: ["agents"] },

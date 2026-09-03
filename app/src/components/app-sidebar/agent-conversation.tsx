@@ -51,6 +51,7 @@ export const AgentConversation = memo(function AgentConversation({
         name={agent.name}
         participantIds={[agent.id]}
         participantImages={[agent.avatarUrl]}
+        participantPresets={[agent.avatarPreset ?? null]}
         pinned={channel.pinned}
         unread={unread && !isOpen}
       />
@@ -116,7 +117,8 @@ export function UnstartedAgentConversation({
         <ChannelAvatar
           participantIds={[agent.id]}
           participantImages={[agent.avatarUrl]}
-          size={32}
+          participantPresets={[agent.avatarPreset ?? null]}
+          size={36}
         />
         <div className="flex min-w-0 flex-1 flex-col">
           <span className="truncate text-[14px] tracking-[-1%]">

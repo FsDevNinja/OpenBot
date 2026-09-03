@@ -60,7 +60,9 @@ function RouteComponent() {
             </div>
             <ItemContent>
               <ItemTitle>Avatar</ItemTitle>
-              <ItemDescription>PNG, JPEG, or WebP, up to 2 MB.</ItemDescription>
+              <ItemDescription>
+                PNG, JPEG, WebP, or animated GIF, up to 2 MB.
+              </ItemDescription>
             </ItemContent>
             <ItemActions>
               <AvatarUploadActions

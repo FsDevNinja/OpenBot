@@ -755,6 +755,7 @@ async function createPersistentAgent(options: {
   name: string;
   owner: AgentActor;
   avatarImage?: string;
+  avatarPreset?: { shape: number; color: number };
   visibility?: "public" | "private";
 }) {
   const agentId = options.id ?? persistentId("agent");
@@ -771,6 +772,8 @@ async function createPersistentAgent(options: {
     title: `${options.name} title`,
     roleDescription: `${options.name} role description`,
     avatarSeed: agentId,
+    avatarPresetShape: options.avatarPreset?.shape,
+    avatarPresetColor: options.avatarPreset?.color,
     avatarImage: options.avatarImage,
     visibility: options.visibility ?? "private",
   });
@@ -845,6 +848,7 @@ describe("channel store integration", () => {
     const avatarImage = "data:image/png;base64,roster";
     const agentId = await createPersistentAgent({
       avatarImage,
+      avatarPreset: { shape: 6, color: 9 },
       name: "Branded agent",
       owner: actor,
     });
@@ -855,6 +859,7 @@ describe("channel store integration", () => {
     expect(page.channels.find((channel) => channel.id === created.id)).toEqual(
       expect.objectContaining({
         agentIds: [agentId],
+        avatarPresets: [{ shape: 6, color: 9 }],
         hasCustomAvatars: [true],
       }),
     );
@@ -870,7 +875,11 @@ describe("channel store integration", () => {
       persistentRequireUser,
     ).request("http://openbot.test/");
     const body = (await response.json()) as {
-      channels: { id: string; avatarUrls: (string | null)[] }[];
+      channels: {
+        id: string;
+        avatarPresets: Array<{ shape: number; color: number } | null>;
+        avatarUrls: (string | null)[];
+      }[];
     };
     expect(
       body.channels.find((channel) => channel.id === created.id)?.avatarUrls,
@@ -881,6 +890,9 @@ describe("channel store integration", () => {
         ),
       ),
     ]);
+    expect(
+      body.channels.find((channel) => channel.id === created.id)?.avatarPresets,
+    ).toEqual([{ shape: 6, color: 9 }]);
   });
 
   test("reads the creator's persisted channel exactly", async () => {

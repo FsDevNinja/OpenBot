@@ -12,6 +12,7 @@ import { Link, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
 import type { ZodType } from "zod";
 import { AbstractAvatar } from "@/components/agents/abstract-avatar";
+import { BotAvatarPresetPicker } from "@/components/agents/bot-avatar-preset-picker";
 import { CallbackTokenPanel } from "@/components/agents/callback-token-panel";
 import { HandoffPanel } from "@/components/agents/handoff-panel";
 import { PluginMark } from "@/components/plugin-mark";
@@ -70,6 +71,7 @@ import {
   duplicateAgentMutationOptions,
   setAgentHiddenMutationOptions,
   updateAgentAvatarMutationOptions,
+  updateAgentAvatarPresetMutationOptions,
   updateAgentMutationOptions,
 } from "@/lib/agents/mutations";
 import {
@@ -132,6 +134,9 @@ const SECTIONS = [
 
 type SectionId = (typeof SECTIONS)[number]["id"];
 
+/** One explicit height shared by both panes, so the sidebar background reaches the dialog floor. */
+export const AGENT_DIALOG_LAYOUT_CLASS = "h-[640px] min-h-0 max-h-[80svh]";
+
 function AgentDialogBody({ agentId }: { agentId: string }) {
   const [section, setSection] = useState<SectionId>("general");
   const agent = useQuery(agentQueryOptions(agentId));
@@ -158,14 +163,15 @@ function AgentDialogBody({ agentId }: { agentId: string }) {
   return (
     <>
       <DialogTitle className="sr-only">{profile.name}</DialogTitle>
-      {/* min-h-full overrides the provider's own min-h-svh, which is sized for a page. */}
-      <SidebarProvider className="min-h-full items-start">
+      {/* The wrapper owns the height so both panes stretch to the same dialog boundary. */}
+      <SidebarProvider className={AGENT_DIALOG_LAYOUT_CLASS}>
         <Sidebar className="hidden md:flex" collapsible="none">
           {/* Who this dialog is about, said once here rather than repeated per section. */}
           <SidebarHeader className="flex-row items-center gap-3 p-4">
             <AbstractAvatar
               image={profile.avatarUrl}
               name={profile.name}
+              preset={profile.avatarPreset}
               seed={profile.avatarSeed}
               size={36}
             />
@@ -198,7 +204,7 @@ function AgentDialogBody({ agentId }: { agentId: string }) {
             </SidebarGroup>
           </SidebarContent>
         </Sidebar>
-        <main className="flex h-[640px] max-h-[80svh] flex-1 flex-col overflow-hidden">
+        <main className="flex min-h-0 flex-1 flex-col overflow-hidden">
           {/*
            * The sidebar hides below md, and without this strip that left the sections unreachable
            * on a phone: the dialog opened on General and nothing could leave it. A scrollable row
@@ -210,6 +216,7 @@ function AgentDialogBody({ agentId }: { agentId: string }) {
               <AbstractAvatar
                 image={profile.avatarUrl}
                 name={profile.name}
+                preset={profile.avatarPreset}
                 seed={profile.avatarSeed}
                 size={28}
               />
@@ -269,6 +276,9 @@ function GeneralSection({
   const updateAvatar = useMutation(
     updateAgentAvatarMutationOptions(queryClient),
   );
+  const updateAvatarPreset = useMutation(
+    updateAgentAvatarPresetMutationOptions(queryClient),
+  );
 
   /*
    * One field at a time, over the whole update endpoint: the API takes the full profile, so the
@@ -302,20 +312,32 @@ function GeneralSection({
               <AbstractAvatar
                 image={profile.avatarUrl}
                 name={profile.name}
+                preset={profile.avatarPreset}
                 seed={profile.avatarSeed}
                 size={40}
               />
               <div>
                 <ItemTitle>Avatar</ItemTitle>
                 <ItemDescription>
-                  PNG, JPEG, or WebP, up to 2 MB.
+                  Animated preset, PNG, JPEG, WebP, or GIF up to 2 MB.
                 </ItemDescription>
               </div>
             </div>
           </ItemContent>
           {profile.canCustomizeAvatar ? (
-            <ItemActions>
+            <ItemActions className="flex-wrap">
+              <BotAvatarPresetPicker
+                disabled={
+                  updateAvatar.isPending || updateAvatarPreset.isPending
+                }
+                onChange={(preset) =>
+                  updateAvatarPreset.mutateAsync({ agentId, preset })
+                }
+                seed={profile.avatarSeed}
+                value={profile.avatarPreset}
+              />
               <AvatarUploadActions
+                disabled={updateAvatarPreset.isPending}
                 hasImage={profile.avatarUrl !== null}
                 label={`${profile.name} avatar`}
                 onChange={(image) =>

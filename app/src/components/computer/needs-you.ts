@@ -7,7 +7,11 @@ import { readControl } from "@/lib/computers/control";
 
 const INTERVAL_MS = 3_000;
 
-export function useNeedsYou(botId: string | undefined, when: boolean): boolean {
+export function useNeedsYou(
+  botId: string | undefined,
+  when: boolean,
+  includeHumanControl = false,
+): boolean {
   const [needed, setNeeded] = useState(false);
 
   useEffect(() => {
@@ -17,21 +21,30 @@ export function useNeedsYou(botId: string | undefined, when: boolean): boolean {
     }
 
     let live = true;
+    let timer: ReturnType<typeof setTimeout>;
     const check = async () => {
       const state = await readControl(botId).catch(() => null);
       if (!live) return;
-      setNeeded(
-        Boolean(state && (state.requested || state.secretWanted !== undefined)),
-      );
+      // An unavailable read is not a cleared request. Keep the last known state on transient errors.
+      if (state) {
+        setNeeded(
+          Boolean(
+            state.requested ||
+              state.secretWanted !== undefined ||
+              (includeHumanControl && state.holder === "human"),
+          ),
+        );
+      }
+      // Do not pile up concurrent ensures when the computer supervisor is slow.
+      timer = setTimeout(() => void check(), INTERVAL_MS);
     };
 
     void check();
-    const timer = setInterval(() => void check(), INTERVAL_MS);
     return () => {
       live = false;
-      clearInterval(timer);
+      clearTimeout(timer);
     };
-  }, [botId, when]);
+  }, [botId, when, includeHumanControl]);
 
   return needed;
 }

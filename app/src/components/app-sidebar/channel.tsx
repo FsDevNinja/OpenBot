@@ -39,6 +39,7 @@ export const Channel = memo(function Channel({
   channelId,
   participantIds,
   participantImages,
+  participantPresets,
   name,
   lastMessage,
   lastMessageAt,
@@ -50,6 +51,9 @@ export const Channel = memo(function Channel({
   channelId: string;
   participantIds: string[];
   participantImages?: (string | null)[];
+  participantPresets?: Parameters<
+    typeof ChannelAvatar
+  >[0]["participantPresets"];
   name: string;
   lastMessage?: string;
   lastMessageAt?: string;
@@ -119,7 +123,8 @@ export const Channel = memo(function Channel({
               <ChannelAvatar
                 participantIds={participantIds}
                 participantImages={participantImages}
-                size={32}
+                participantPresets={participantPresets}
+                size={36}
                 typing={busy}
               />
             </div>

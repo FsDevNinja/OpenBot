@@ -72,6 +72,7 @@ export function AgentProfile({ agentId }: { agentId: string }) {
         <AbstractAvatar
           image={profile.avatarUrl}
           name={profile.name}
+          preset={profile.avatarPreset}
           seed={profile.avatarSeed}
           size={80}
         />

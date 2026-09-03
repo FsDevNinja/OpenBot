@@ -235,6 +235,10 @@ type Props = {
    * side panel is not a turn and has nothing to remember.
    */
   toolCallId?: string;
+  /** A whole browsing reply: persistent inline controls, unlike individual legacy tool cards. */
+  sessionControls?: boolean;
+  /** Only the current reply may stay live when the agent finishes while the person is driving. */
+  retainHumanControl?: boolean;
 };
 
 export function ComputerView({
@@ -248,6 +252,8 @@ export function ComputerView({
   page,
   finished,
   toolCallId,
+  sessionControls = false,
+  retainHumanControl = false,
 }: Props) {
   const [shot, setShot] = useState<Screenshot | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
@@ -256,6 +262,8 @@ export function ComputerView({
   const [expanded, setExpanded] = useState(false);
   const [desktopUnavailable, setDesktopUnavailable] = useState(false);
   const [control, setControl] = useState<ControlState | null>(null);
+  const [takingControl, setTakingControl] = useState(false);
+  const [takeoverProblem, setTakeoverProblem] = useState<string | null>(null);
   /** Held only until it is sent. Never lifted into a URL, a log, or anything that outlives this form. */
   const [secret, setSecret] = useState("");
   const [secretProblem, setSecretProblem] = useState<string | null>(null);
@@ -283,6 +291,25 @@ export function ComputerView({
   const handBack = async () => {
     const state = await releaseControl(computerId);
     if (state) setControl(state);
+  };
+  const takeWheel = async () => {
+    setTakingControl(true);
+    setTakeoverProblem(null);
+    try {
+      const state = await takeControl(computerId);
+      if (!state) {
+        setTakeoverProblem("Could not take control. Please try again.");
+        return;
+      }
+      setControl(state);
+      setExpanded(true);
+    } catch {
+      setTakeoverProblem(
+        "The computer could not be reached. Please try again.",
+      );
+    } finally {
+      setTakingControl(false);
+    }
   };
   /** Secret prompts keep the screen live even though the human does not hold the wheel. */
   const secretPending = Boolean(control?.secretWanted);
@@ -322,7 +349,10 @@ export function ComputerView({
   /** Bumped when a frame arrives, because the store it lands in is not React state. */
   const [, setFrameArrived] = useState(0);
 
-  const settled = !active && (finished || Boolean(knownPage));
+  const settled =
+    !active &&
+    (finished || Boolean(knownPage)) &&
+    !(retainHumanControl && driving);
 
   /*
    * The frame this turn's page was showing, fetched once and then kept.
@@ -559,17 +589,19 @@ export function ComputerView({
               <strong className="font-medium">The assistant needs you.</strong>{" "}
               {control.reason}
             </span>
-            <button
-              type="button"
-              onClick={async () => {
-                const state = await takeControl(computerId);
-                if (state) setControl(state);
-                setExpanded(true);
-              }}
-              className="shrink-0 rounded-md bg-primary px-3 py-1 font-medium text-primary-foreground text-xs"
-            >
-              Take control
-            </button>
+            {sessionControls ? null : (
+              <button
+                type="button"
+                onClick={async () => {
+                  const state = await takeControl(computerId);
+                  if (state) setControl(state);
+                  setExpanded(true);
+                }}
+                className="shrink-0 rounded-md bg-primary px-3 py-1 font-medium text-primary-foreground text-xs"
+              >
+                Take control
+              </button>
+            )}
           </div>
         ) : null}
 
@@ -628,12 +660,52 @@ export function ComputerView({
           </form>
         ) : null}
 
-        {/*
-         * The inline card carries no persistent footer: taking the wheel, handing it back, and the
-         * standing "who is driving" prose all live in the full-size view, where there is a page big
-         * enough to drive. The two rows above appear only while the Bot is stuck — waiting on a
-         * credential, or asking for the wheel — and go again when it is not.
-         */}
+        {sessionControls ? (
+          <figcaption className="flex flex-wrap items-center justify-between gap-2 border-t px-3 py-2 text-sm">
+            <span className="min-w-0 truncate text-muted-foreground">
+              {settled
+                ? "Browser · Finished"
+                : driving
+                  ? "Browser · You have control"
+                  : "Browser · Live"}
+              {knownPage?.url ? ` · ${hostOf(knownPage.url)}` : ""}
+            </span>
+            <span className="flex shrink-0 items-center gap-2">
+              <button
+                type="button"
+                className="rounded-md border px-3 py-1 text-xs"
+                onClick={() => setExpanded(true)}
+              >
+                Expand
+              </button>
+              {!settled ? (
+                <button
+                  type="button"
+                  disabled={takingControl}
+                  className="rounded-md bg-primary px-3 py-1 text-xs font-medium text-primary-foreground"
+                  onClick={async () => {
+                    if (driving) {
+                      await handBack();
+                      return;
+                    }
+                    await takeWheel();
+                  }}
+                >
+                  {takingControl
+                    ? "Taking control…"
+                    : driving
+                      ? "Hand back"
+                      : "Take control"}
+                </button>
+              ) : null}
+            </span>
+            {takeoverProblem ? (
+              <p role="alert" className="w-full text-destructive text-xs">
+                {takeoverProblem}
+              </p>
+            ) : null}
+          </figcaption>
+        ) : null}
       </figure>
 
       {/*

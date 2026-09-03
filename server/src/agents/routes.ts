@@ -4,7 +4,12 @@ import { bodyLimit } from "hono/body-limit";
 import type { AuditEventType, AuditStore } from "../audit";
 import { recordAuditEvent } from "../audit";
 import type { AppVariables } from "../auth/guards";
-import { avatarResponse, avatarUrl, parseAvatarImage } from "../avatar";
+import {
+  avatarResponse,
+  avatarUrl,
+  parseAvatarImage,
+  parseAvatarPreset,
+} from "../avatar";
 import { testAgentConnection } from "./connection-test";
 import { checkAgentEndpoint } from "./endpoint";
 import { canCustomizeAgentAvatar, canManageAgent } from "./profile-policy";
@@ -310,7 +315,22 @@ export function createAgentRoutes(
     async (context) => {
       const body = (await context.req.json().catch(() => null)) as {
         image?: unknown;
+        preset?: unknown;
       } | null;
+      if (body && Object.hasOwn(body, "preset")) {
+        const parsed = parseAvatarPreset(body.preset);
+        if (!parsed.ok) return context.json({ error: parsed.error }, 400);
+        try {
+          const agent = await store.setAvatarPreset(
+            context.var.actor,
+            context.req.param("agentId"),
+            parsed.value,
+          );
+          return context.json({ agent: dto(context.var.actor, agent) });
+        } catch (error) {
+          return mapStoreError(context, error);
+        }
+      }
       const parsed = parseAvatarImage(body?.image);
       if (!parsed.ok) return context.json({ error: parsed.error }, 400);
 
@@ -669,6 +689,7 @@ function agentDto(actor: AgentActor, agent: AgentProfile) {
     title: agent.title,
     roleDescription: agent.roleDescription,
     avatarSeed: agent.avatarSeed,
+    avatarPreset: agent.avatarPreset,
     avatarUrl: avatarUrl(
       `/api/agents/${encodeURIComponent(agent.id)}/avatar/image`,
       agent.hasCustomAvatar ? agent.avatarUpdatedAt : null,

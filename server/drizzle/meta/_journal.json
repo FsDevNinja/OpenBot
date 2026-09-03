@@ -232,6 +232,13 @@
       "when": 1788382261575,
       "tag": "0032_daily_loa",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1788454302322,
+      "tag": "0033_strong_pandemic",
+      "breakpoints": true
     }
   ]
 }

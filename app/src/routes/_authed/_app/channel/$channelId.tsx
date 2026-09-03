@@ -7,7 +7,7 @@ import {
 } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { motion, useReducedMotion } from "motion/react";
-import { useEffect, useRef } from "react";
+import { useEffect } from "react";
 import { z } from "zod";
 import { AgentProfile } from "@/components/agents/agent-profile";
 import { hasUnseenActivity } from "@/components/app-sidebar/app-sidebar";
@@ -26,7 +26,6 @@ import {
   channelListQueryOptions,
   channelQueryOptions,
 } from "@/lib/channels/queries";
-import { onComputerActivity } from "@/lib/agent/computer-activity";
 
 const chatSearchSchema = z.object({
   settings: z.boolean().optional(),
@@ -123,39 +122,8 @@ function RouteComponent() {
     }
   }, [channelId, unseen, markReadMutate]);
 
-  /*
-   * Needs-you prompts auto-open the screen panel, because the prompt with the reason on it — the
-   * amber "the assistant needs you" row, and the masked field for a credential — is drawn on the
-   * screen card in that panel. Nothing about a stuck Bot is actionable until this pane is open.
-   */
-  useEffect(() => {
-    if (!needsYou) return;
-    show("watch");
-  });
-
-  // Browser activity may auto-open the screen once per run unless this run was dismissed.
-  const dismissedEpoch = useRef<number | null>(null);
-  const runEpoch = useRef<number | null>(null);
-  useEffect(() => {
-    if (!agentId) return;
-    return onComputerActivity((activity) => {
-      if (activity.botId !== agentId) return;
-      runEpoch.current = activity.epoch;
-      if (dismissedEpoch.current === activity.epoch) return;
-      navigate({
-        search: (previous) =>
-          previous.watch === true || previous.settings === true
-            ? previous
-            : { ...previous, settings: undefined, watch: true },
-      });
-    });
-  }, [agentId, navigate]);
-
-  // Settings and watch share one pane; opening either clears the other URL flag.
+  // The browser session lives in chat. Only an explicit click opens the optional side panel.
   const show = (next: "settings" | "watch" | null) => {
-    // Dismissal applies only to the current browser-activity run.
-    if (next !== "watch" && isWatching)
-      dismissedEpoch.current = runEpoch.current;
     return navigate({
       search: (previous) => ({
         ...previous,
@@ -198,6 +166,9 @@ function RouteComponent() {
                 participantIds={channel.data?.agentIds ?? []}
                 participantImages={
                   agentId ? [agent.data?.avatarUrl ?? null] : undefined
+                }
+                participantPresets={
+                  agentId ? [agent.data?.avatarPreset ?? null] : undefined
                 }
                 size={22}
               />

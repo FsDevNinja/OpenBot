@@ -4,13 +4,8 @@ import type { Observable } from "rxjs";
 import { defer, from, switchMap } from "rxjs";
 import { z } from "zod";
 import { PROVENANCE_GUIDANCE } from "../../../shared/bot-prompt";
-import type { AgentActor } from "./profile-types";
 import type { AgentFetch, StallGuard } from "../channels/stall-guard";
 import { COMPUTER_TOOLS } from "../computer/schema";
-import {
-  BuiltInAgent,
-  type BuiltInAgentConfiguration,
-} from "../runtime/built-in-agent";
 import type { SelectableSkill, Selection } from "../plugins/selection";
 import {
   latestUserText,
@@ -19,17 +14,25 @@ import {
 } from "../plugins/selection";
 import type { GrantedTool } from "../plugins/tools";
 import { grantedToolGuidance } from "../plugins/tools";
+import {
+  BuiltInAgent,
+  type BuiltInAgentConfiguration,
+} from "../runtime/built-in-agent";
+import type { AgentActor } from "./profile-types";
 
 /**
  * Browser tools that a remote Bot may call back through this deployment.
  *
- * Human handoff and secret-entry tools deliberately stay in the browser: their handlers wait for a
- * person for up to ten minutes, while a remote agent callback is one synchronous HTTP request. The
- * tools here all have a complete server-side implementation in `ComputerGateway`, so the remote Bot
+ * Secret entry deliberately stays in the browser, where the value can travel straight to the field
+ * without crossing the provider. A help request is safe to bridge: it carries only the reason, and
+ * the server holds it briefly so the provider can continue when the person hands the wheel back.
+ * Every tool here has a complete server-side implementation in `ComputerGateway`, so the remote Bot
  * gets the same policy decision and audit row as a built-in Bot.
  */
 const REMOTE_COMPUTER_TOOLS = new Set<string>([
   ...COMPUTER_TOOLS,
+  // Human takeover is provider-visible, but a secret value never is.
+  "computer_request_help",
   // The command tool predates COMPUTER_TOOLS but is governed by the same gateway.
   "computer_run_command",
 ]);
@@ -37,7 +40,34 @@ const REMOTE_COMPUTER_TOOLS = new Set<string>([
 export function remoteComputerToolAliases(tools: RunAgentInput["tools"] = []) {
   return tools
     .filter((tool) => REMOTE_COMPUTER_TOOLS.has(tool.name))
-    .map((tool) => ({ ...tool, name: `openbot_${tool.name}` }));
+    .map((tool) => ({
+      ...tool,
+      name: `openbot_${tool.name}`,
+      description:
+        "OpenBot has granted this governed dynamic tool for this run. It is permitted by the " +
+        "provider boundary and is not native Codex browser or computer access. " +
+        tool.description,
+    }));
+}
+
+/** Distinguish the granted OpenBot bridge from provider-native computer capabilities. */
+export function remoteComputerGuidance(
+  tools: ReturnType<typeof remoteComputerToolAliases>,
+) {
+  if (tools.length === 0) return "";
+  const help = tools.some(
+    (tool) => tool.name === "openbot_computer_request_help",
+  )
+    ? " When the person asks to take control, call openbot_computer_request_help after opening the requested page."
+    : "";
+  const names = tools.map((tool) => tool.name).join(", ");
+  return (
+    `OpenBot has explicitly granted this run the following governed dynamic computer tools: ${names}. ` +
+    "You may browse and operate the computer through those OpenBot tools. The provider instruction " +
+    "not to browse or use a computer applies only to native Codex capabilities; it does not prohibit " +
+    "these OpenBot-governed dynamic tools. Every call still goes through OpenBot's authorization, " +
+    `policy and audit checks.${help}`
+  );
 }
 
 /**
@@ -594,15 +624,27 @@ function remoteAgentWithStandingRole(
      * it back to the governed gateway.
      */
     const computerTools = remoteComputerToolAliases(input.tools);
+    const computerGuidance = remoteComputerGuidance(computerTools);
+    const computerGuidanceId = `openbot-computer-guidance:${agent.id}`;
     return next.run({
       ...input,
       messages: [
         agent.standingMessage,
         ...(holdingsMessage ? [holdingsMessage] : []),
+        ...(computerGuidance
+          ? [
+              {
+                id: computerGuidanceId,
+                role: "system" as const,
+                content: computerGuidance,
+              },
+            ]
+          : []),
         ...input.messages.filter(
           (message) =>
             message.id !== agent.standingMessage.id &&
-            message.id !== holdingsMessage?.id,
+            message.id !== holdingsMessage?.id &&
+            message.id !== computerGuidanceId,
         ),
       ],
       /*

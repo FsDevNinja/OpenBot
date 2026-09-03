@@ -1,4 +1,5 @@
 import { infiniteQueryOptions, queryOptions } from "@tanstack/react-query";
+import type { BotAvatarPreset } from "@/lib/avatar-preset";
 import { client } from "@/lib/client";
 
 /**
@@ -18,6 +19,8 @@ export type AgentChannel = {
 
 /** A channel plus the last thing said in it, which is what the roster renders. */
 export type ChannelSummary = AgentChannel & {
+  /** Selected generated presets, parallel to agentIds. */
+  avatarPresets?: Array<BotAvatarPreset | null>;
   /** Parallel to agentIds; null means use the generated fallback. */
   avatarUrls: (string | null)[];
   lastMessage: string | null;

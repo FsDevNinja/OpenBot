@@ -6,11 +6,45 @@ const MAX_AVATAR_EDGE = 4096;
 const MAX_AVATAR_PIXELS = 16_777_216;
 
 const DATA_URL =
-  /^data:(image\/(?:jpeg|png|webp));base64,([A-Za-z0-9+/]+={0,2})$/;
+  /^data:(image\/(?:gif|jpeg|png|webp));base64,([A-Za-z0-9+/]+={0,2})$/;
+
+const AVATAR_FORMATS = "PNG, JPEG, WebP, or GIF";
 
 export type AvatarImageResult =
   | { ok: true; value: string | null }
   | { ok: false; error: string };
+
+export type AvatarPreset = { shape: number; color: number };
+
+export type AvatarPresetResult =
+  | { ok: true; value: AvatarPreset | null }
+  | { ok: false; error: string };
+
+/** Validate the two bounded indices stored for a transparent animated preset. */
+export function parseAvatarPreset(value: unknown): AvatarPresetResult {
+  if (value === null) return { ok: true, value: null };
+  if (!value || typeof value !== "object") {
+    return { ok: false, error: "Choose a valid avatar shape and colour." };
+  }
+  const candidate = value as { shape?: unknown; color?: unknown };
+  if (
+    !Number.isInteger(candidate.shape) ||
+    !Number.isInteger(candidate.color) ||
+    Number(candidate.shape) < 0 ||
+    Number(candidate.shape) > 7 ||
+    Number(candidate.color) < 0 ||
+    Number(candidate.color) > 10
+  ) {
+    return { ok: false, error: "Choose a valid avatar shape and colour." };
+  }
+  return {
+    ok: true,
+    value: {
+      shape: Number(candidate.shape),
+      color: Number(candidate.color),
+    },
+  };
+}
 
 /**
  * Validate an uploaded avatar at the trust boundary.
@@ -24,7 +58,7 @@ export function parseAvatarImage(value: unknown): AvatarImageResult {
   if (typeof value !== "string") {
     return {
       ok: false,
-      error: "Avatar image must be a PNG, JPEG, or WebP file.",
+      error: `Avatar image must be a ${AVATAR_FORMATS} file.`,
     };
   }
 
@@ -32,7 +66,7 @@ export function parseAvatarImage(value: unknown): AvatarImageResult {
   if (!match || match[2].length % 4 !== 0) {
     return {
       ok: false,
-      error: "Avatar image must be a PNG, JPEG, or WebP file.",
+      error: `Avatar image must be a ${AVATAR_FORMATS} file.`,
     };
   }
 
@@ -54,7 +88,7 @@ export function parseAvatarImage(value: unknown): AvatarImageResult {
   if (!dimensions) {
     return {
       ok: false,
-      error: "Avatar image does not match its PNG, JPEG, or WebP format.",
+      error: `Avatar image does not match its ${AVATAR_FORMATS} format.`,
     };
   }
   if (
@@ -108,7 +142,17 @@ function imageDimensions(
 ): { width: number; height: number } | null {
   if (mime === "image/png") return pngDimensions(bytes);
   if (mime === "image/jpeg") return jpegDimensions(bytes);
+  if (mime === "image/gif") return gifDimensions(bytes);
   return webpDimensions(bytes);
+}
+
+function gifDimensions(bytes: Buffer) {
+  if (bytes.length < 10) return null;
+  const signature = bytes.toString("ascii", 0, 6);
+  if (signature !== "GIF87a" && signature !== "GIF89a") return null;
+  const width = bytes.readUInt16LE(6);
+  const height = bytes.readUInt16LE(8);
+  return width > 0 && height > 0 ? { width, height } : null;
 }
 
 function pngDimensions(bytes: Buffer) {

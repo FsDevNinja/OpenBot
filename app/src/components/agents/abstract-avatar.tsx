@@ -1,14 +1,17 @@
-import Avatar from "boring-avatars";
+import type { BotAvatarPreset } from "@/lib/avatar-preset";
+import { GeneratedBotAvatar } from "./generated-bot-avatar";
 
 export function AbstractAvatar({
   name,
   seed,
   image,
+  preset,
   size = 40,
 }: {
   name: string;
   seed: string;
   image?: string | null;
+  preset?: BotAvatarPreset | null;
   size?: number;
 }) {
   return (
@@ -21,10 +24,7 @@ export function AbstractAvatar({
       {image ? (
         <img alt="" className="size-full object-cover" src={image} />
       ) : (
-        /* The drawing carries its own role; hidden so the coworker is announced once, by name. */
-        <span aria-hidden="true" className="contents">
-          <Avatar name={seed} size={size} />
-        </span>
+        <GeneratedBotAvatar preset={preset} seed={seed} size={size} />
       )}
     </span>
   );

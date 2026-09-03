@@ -46,10 +46,17 @@ dialog, and an administrator can do the same for any Bot, including one supplied
 package. Removing a custom image returns to the identity-provider image or initials for a person,
 and to the generated avatar for a Bot.
 
-Uploads accept PNG, JPEG, and WebP images up to 2 MB. The server checks the decoded size, file
-signature, and dimensions before storing the image in PostgreSQL. Roster and channel responses carry
-a short versioned image URL rather than the image bytes, so one list never copies every avatar into
-its JSON response.
+Without an upload, a Bot gets a transparent OpenBot shape-and-colour preset. Its owner can choose
+among eight shapes and eleven colours or reset to the deterministic default derived from the avatar
+seed. The shape itself is the face: its white eyes blink and look around while the silhouette moves
+subtly, with no generated background disc. The selected face follows the Bot through profiles,
+sidebars, recipients, handoffs, and group-channel avatars. Idle motion is disabled by the person's
+reduced-motion preference and is independent from the separate working-status badge.
+
+Uploads accept PNG, JPEG, WebP, and animated GIF images up to 2 MB. The server checks the decoded
+size, file signature, and dimensions before storing the image in PostgreSQL. GIF bytes are served
+unchanged so their animation remains intact. Roster and channel responses carry a short versioned
+image URL rather than the image bytes, so one list never copies every avatar into its JSON response.
 
 ## Channels
 

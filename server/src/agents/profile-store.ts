@@ -20,6 +20,7 @@ import {
 import { canCustomizeAgentAvatar, canManageAgent } from "./profile-policy";
 import type {
   AgentActor,
+  AgentAvatarPreset,
   AgentProfile,
   CreateAgentInput,
 } from "./profile-types";
@@ -61,6 +62,11 @@ export type AgentProfileStore = {
     actor: AgentActor,
     id: string,
     image: string | null,
+  ): Promise<AgentProfile>;
+  setAvatarPreset(
+    actor: AgentActor,
+    id: string,
+    preset: AgentAvatarPreset | null,
   ): Promise<AgentProfile>;
   duplicate(actor: AgentActor, id: string): Promise<AgentProfile>;
   setHidden(actor: AgentActor, id: string, hidden: boolean): Promise<void>;
@@ -127,6 +133,8 @@ const joinedProjection = {
   title: agentProfiles.title,
   roleDescription: agentProfiles.roleDescription,
   avatarSeed: agentProfiles.avatarSeed,
+  avatarPresetShape: agentProfiles.avatarPresetShape,
+  avatarPresetColor: agentProfiles.avatarPresetColor,
   hasCustomAvatar: sql<boolean>`${agentProfiles.avatarImage} is not null`,
   avatarUpdatedAt: agentProfiles.updatedAt,
   visibility: agentProfiles.visibility,
@@ -174,6 +182,10 @@ function mapProfile(
     title: row.title,
     roleDescription: row.roleDescription,
     avatarSeed: row.avatarSeed,
+    avatarPreset:
+      row.avatarPresetShape === null || row.avatarPresetColor === null
+        ? null
+        : { shape: row.avatarPresetShape, color: row.avatarPresetColor },
     hasCustomAvatar: row.hasCustomAvatar,
     avatarUpdatedAt: row.avatarUpdatedAt,
     visibility: row.visibility,
@@ -547,6 +559,29 @@ export function createAgentProfileStore(
       });
     },
 
+    setAvatarPreset(actor, id, preset) {
+      return database.transaction(async (transaction) => {
+        await lockProfileMutationRows(transaction, id);
+        const profile = await findAccessibleProfile(transaction, actor, id);
+        if (!profile) throw new AgentNotFoundError(id);
+        requireAvatarManageable(actor, profile);
+
+        await transaction
+          .update(agentProfiles)
+          .set({
+            avatarImage: null,
+            avatarPresetShape: preset?.shape ?? null,
+            avatarPresetColor: preset?.color ?? null,
+            updatedAt: new Date(),
+          })
+          .where(eq(agentProfiles.agentId, id));
+
+        const updated = await findAccessibleProfile(transaction, actor, id);
+        if (!updated) throw new AgentNotFoundError(id);
+        return updated;
+      });
+    },
+
     duplicate(actor, id) {
       return database.transaction(async (transaction) => {
         const source = await findAccessibleProfile(transaction, actor, id);
@@ -592,6 +627,8 @@ export function createAgentProfileStore(
           roleDescription: source.roleDescription,
           avatarSeed: source.avatarSeed,
           avatarImage: sourceAvatar?.image,
+          avatarPresetShape: source.avatarPreset?.shape,
+          avatarPresetColor: source.avatarPreset?.color,
           visibility: "private",
         });
 

@@ -1,4 +1,5 @@
 import { queryOptions } from "@tanstack/react-query";
+import type { BotAvatarPreset } from "@/lib/avatar-preset";
 import { client, tryClient } from "@/lib/client";
 
 export type AgentVisibility = "public" | "private";
@@ -15,6 +16,7 @@ export type AgentProfile = {
   title: string;
   roleDescription: string;
   avatarSeed: string;
+  avatarPreset?: BotAvatarPreset | null;
   avatarUrl: string | null;
   visibility: AgentVisibility;
   /** Where this coworker runs. Null for the Bot in the box. */

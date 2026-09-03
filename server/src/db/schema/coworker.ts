@@ -4,9 +4,12 @@
  * Split by owner so two people can add tables all day without touching the same lines. Add tables
  * here; never edit core.ts or computer.ts to do it.
  */
+import { sql } from "drizzle-orm";
 import {
   boolean,
+  check,
   index,
+  integer,
   pgEnum,
   pgTable,
   primaryKey,
@@ -37,6 +40,9 @@ export const agentProfiles = pgTable(
     title: text("title").notNull(),
     roleDescription: text("role_description").notNull(),
     avatarSeed: text("avatar_seed").notNull(),
+    /** A selected animated preset. Both are null when the seed chooses the fallback. */
+    avatarPresetShape: integer("avatar_preset_shape"),
+    avatarPresetColor: integer("avatar_preset_color"),
     /** A user-chosen image, falling back to the deterministic seed when absent. */
     avatarImage: text("avatar_image"),
     visibility: agentVisibility("visibility").notNull(),
@@ -62,6 +68,18 @@ export const agentProfiles = pgTable(
     index("agent_profiles_visibility_deleted_idx").on(
       table.visibility,
       table.deletedAt,
+    ),
+    check(
+      "agent_profiles_avatar_preset_pair",
+      sql`(${table.avatarPresetShape} is null) = (${table.avatarPresetColor} is null)`,
+    ),
+    check(
+      "agent_profiles_avatar_preset_shape_range",
+      sql`${table.avatarPresetShape} is null or ${table.avatarPresetShape} between 0 and 7`,
+    ),
+    check(
+      "agent_profiles_avatar_preset_color_range",
+      sql`${table.avatarPresetColor} is null or ${table.avatarPresetColor} between 0 and 10`,
     ),
   ],
 );

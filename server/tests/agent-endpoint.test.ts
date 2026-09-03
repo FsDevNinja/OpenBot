@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { dynamicToolsOf } from "../../agent-codex/src/tools";
-import { mintRunAssertion } from "../src/agents/callback-token";
 import { agentAuthHeaders, storeAgentAuth } from "../src/agents/auth-header";
+import { mintRunAssertion } from "../src/agents/callback-token";
 import { testAgentConnection } from "../src/agents/connection-test";
 import {
   checkAgentEndpoint,
@@ -9,10 +9,13 @@ import {
   EndpointNotAllowedError,
 } from "../src/agents/endpoint";
 import { parseAgentInput } from "../src/agents/routes";
-import { createApp, type AgentRunToolDispatcher } from "../src/app";
+import {
+  remoteComputerGuidance,
+  remoteComputerToolAliases,
+} from "../src/agents/runtime-registry";
+import { type AgentRunToolDispatcher, createApp } from "../src/app";
 import type { ComputerGateway } from "../src/computer/gateway";
 import { loadConfig } from "../src/config";
-import { remoteComputerToolAliases } from "../src/agents/runtime-registry";
 import { testEnvironment } from "./support/environment";
 
 /** A 32-byte key, as the vault expects. */
@@ -209,7 +212,7 @@ describe("the connection test", () => {
 });
 
 describe("Codex computer callbacks", () => {
-  test("offers only the server-owned browser alias to Codex", () => {
+  test("offers server-owned browser and takeover aliases to Codex", () => {
     const frontendTools = [
       {
         name: "computer_navigate",
@@ -237,10 +240,22 @@ describe("Codex computer callbacks", () => {
 
     expect(aliases.map((tool) => tool.name)).toEqual([
       "openbot_computer_navigate",
+      "openbot_computer_request_help",
     ]);
     expect(tools.map((tool) => tool.name)).toEqual([
       "openbot_computer_navigate",
+      "openbot_computer_request_help",
     ]);
+    expect(tools[0]?.description).toContain(
+      "It is permitted by the provider boundary and is not native Codex browser or computer access.",
+    );
+    expect(remoteComputerGuidance(aliases)).toContain(
+      "The provider instruction not to browse or use a computer applies only to native Codex capabilities",
+    );
+    expect(remoteComputerGuidance([])).toBe("");
+    expect(remoteComputerGuidance(aliases.slice(0, 1))).not.toContain(
+      "call openbot_computer_request_help",
+    );
   });
 
   test("routes aliased navigation through the governed computer gateway", async () => {
@@ -315,6 +330,108 @@ describe("Codex computer callbacks", () => {
         botId: "codex-assistant",
         actorId: "local-development",
         url: "https://example.com/",
+      },
+    ]);
+  });
+
+  test.each([
+    ["the person hands the computer back", false],
+    ["the run stops while a control read is stalled", true],
+  ] as const)("keeps takeover bounded until %s", async (_name, stopRun) => {
+    const calls: Array<{ botId: string; actorId: string; reason: string }> = [];
+    const states: Array<{
+      holder: "human" | "bot";
+      since: string;
+      requested: boolean;
+    }> = [
+      { holder: "human", since: "taken", requested: false },
+      { holder: "bot", since: "returned", requested: false },
+    ];
+    const computerGateway = {
+      requestHelp: async (
+        botId: string,
+        actor: { id: string },
+        reason: string,
+      ) => {
+        calls.push({ botId, actorId: actor.id, reason });
+        return {
+          holder: "bot" as const,
+          since: "asked",
+          requested: true,
+          reason,
+        };
+      },
+      control: async () => {
+        if (stopRun) return new Promise(() => {});
+        return (
+          states.shift() ?? {
+            holder: "bot" as const,
+            since: "returned",
+            requested: false,
+          }
+        );
+      },
+    } as unknown as ComputerGateway;
+    const config = loadConfig(
+      testEnvironment({ AGENT_TOOL_TOKEN: "agent-secret" }),
+    );
+    const app = createApp(
+      config,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      computerGateway,
+    );
+    const run = mintRunAssertion(
+      {
+        botId: "codex-assistant",
+        actorId: "local-development",
+        runId: "run-help",
+      },
+      config.keyEncryptionKey,
+    );
+
+    const controller = new AbortController();
+    const responsePromise = app.request(
+      "http://openbot.test/api/agent-tools/call",
+      {
+        method: "POST",
+        signal: controller.signal,
+        headers: {
+          "content-type": "application/json",
+          "x-openbot-agent-token": "agent-secret",
+        },
+        body: JSON.stringify({
+          name: "openbot_computer_request_help",
+          args: { reason: "Please finish signing in." },
+          run,
+        }),
+      },
+    );
+    if (stopRun) setTimeout(() => controller.abort(), 20);
+    const response = await responsePromise;
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      text: string;
+      isError: boolean;
+    };
+    expect(body.isError).toBe(false);
+    expect(JSON.parse(body.text)).toMatchObject({
+      ok: true,
+      outcome: stopRun ? "cancelled" : "answered",
+      result: stopRun
+        ? "The help request was cleared. Tell the person what you still need."
+        : "The person finished and handed control back. Take a fresh snapshot and continue.",
+    });
+    expect(calls).toEqual([
+      {
+        botId: "codex-assistant",
+        actorId: "local-development",
+        reason: "Please finish signing in.",
       },
     ]);
   });

@@ -1,12 +1,17 @@
 export const MAX_AVATAR_BYTES = 2 * 1024 * 1024;
 
-const AVATAR_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
+const AVATAR_TYPES = new Set([
+  "image/gif",
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+]);
 
 export function avatarFileError(
   file: Pick<File, "size" | "type">,
 ): string | null {
   if (!AVATAR_TYPES.has(file.type)) {
-    return "Choose a PNG, JPEG, or WebP image.";
+    return "Choose a PNG, JPEG, WebP, or animated GIF image.";
   }
   if (file.size === 0) return "That image is empty.";
   if (file.size > MAX_AVATAR_BYTES)

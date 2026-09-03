@@ -1,4 +1,4 @@
-import { useFrontendTool } from "@/lib/runtime/provider";
+import { useEffect } from "react";
 import { z } from "zod";
 import { ToolLine } from "@/components/channels/tool-line";
 import { CommandOutput } from "@/components/computer/command-output";
@@ -6,6 +6,7 @@ import { ComputerView } from "@/components/computer/computer-view";
 import { tryClient } from "@/lib/client";
 import { noteBrowsed, recordActivity } from "@/lib/computers/activity";
 import { type ControlState, readControl } from "@/lib/computers/control";
+import { useFrontendTool, useRenderTool } from "@/lib/runtime/provider";
 import { useActiveBotHolder } from "./active-bot";
 import { reportComputerActivity } from "./computer-activity";
 
@@ -237,6 +238,73 @@ function didNotWork(outcome: ComputerOutcome): boolean {
   return outcome.ok === false && outcome.refused !== true;
 }
 
+type ComputerToolRenderProps = {
+  result?: string;
+  status: "executing" | "complete";
+  toolCallId?: string;
+};
+
+/**
+ * One navigation card for both browser-executed and provider-executed computer tools.
+ *
+ * A provider tool is already running through the governed server gateway, so this component only
+ * presents it. Announcing the activity opens the watch pane without asking the browser to navigate
+ * again, which is the duplicate-action boundary the provider alias exists to preserve.
+ */
+function NavigationCard({
+  computerId,
+  result,
+  status,
+  toolCallId,
+  announceActivity = false,
+}: ComputerToolRenderProps & {
+  computerId: string;
+  announceActivity?: boolean;
+}) {
+  const finished = status === "complete" || result !== undefined;
+
+  useEffect(() => {
+    if (!announceActivity || finished) return;
+    reportComputerActivity(computerId);
+  }, [announceActivity, computerId, finished]);
+
+  const outcome = finished ? outcomeOf(result) : {};
+  const page =
+    typeof outcome.url === "string"
+      ? {
+          url: outcome.url,
+          ...(typeof outcome.title === "string"
+            ? { title: outcome.title }
+            : {}),
+        }
+      : undefined;
+  return (
+    <div className="my-2">
+      <ComputerView
+        computerId={computerId}
+        active={!finished}
+        finished={finished}
+        {...(page ? { page } : {})}
+        {...(toolCallId ? { toolCallId } : {})}
+      />
+    </div>
+  );
+}
+
+/** A live card only for the time a Bot is waiting for a person to take the wheel. */
+function HelpCard({
+  computerId,
+  result,
+  status,
+}: ComputerToolRenderProps & { computerId: string }) {
+  const finished = status === "complete" || result !== undefined;
+  return finished ? null : (
+    <div className="my-2">
+      <ComputerView active computerId={computerId} />
+    </div>
+  );
+}
+
 export function ComputerTools() {
   const bot = useActiveBotHolder();
 
@@ -293,50 +361,32 @@ export function ComputerTools() {
           }
         : result;
     },
-    render: ({ result, status, toolCallId }) => {
-      /*
-       * The page this turn left open, so reopening the conversation shows what it browsed rather
-       * than what the Bot has open now. Only once the turn is finished: while it runs, the live
-       * frames are its own.
-       */
-      /*
-       * A RESULT IS WHAT MAKES A TURN OVER, not the status.
-       *
-       * A restored tool call arrives with its result already in hand and a status that is briefly
-       * something other than complete, so keying on the status alone made every reopened turn look
-       * like one still running: the tile polled the live screen, put today's page under yesterday's
-       * answer, and only then restored the frame it should have shown from the start.
-       */
-      const finished = status === "complete" || result !== undefined;
-      const outcome = finished ? outcomeOf(result) : {};
-      const page =
-        typeof outcome.url === "string"
-          ? {
-              url: outcome.url,
-              ...(typeof outcome.title === "string"
-                ? { title: outcome.title }
-                : {}),
-            }
-          : undefined;
-      return (
-        <div className="my-2">
-          <ComputerView
-            computerId={bot.current}
-            active={!finished}
-            /*
-             * FINISHED, NOT "GOT SOMEWHERE". The tile used to count a turn as history only once it
-             * had a page, so a navigation that was refused, failed or stopped never settled: it kept
-             * polling the live screen under a turn that was over, and offered control of it. Those
-             * are the turns most worth freezing, because the thing on screen has nothing to do with
-             * what the person is reading.
-             */
-            finished={finished}
-            {...(page ? { page } : {})}
-            {...(toolCallId ? { toolCallId } : {})}
-          />
-        </div>
-      );
-    },
+    render: ({ result, status, toolCallId }) => (
+      <NavigationCard
+        computerId={bot.current}
+        result={result}
+        status={status}
+        toolCallId={toolCallId}
+      />
+    ),
+  });
+
+  /*
+   * Provider agents execute this aliased tool on the server. Registering only a renderer makes the
+   * same tool call visible in chat without advertising another executable tool to the model or
+   * navigating a second time in the browser.
+   */
+  useRenderTool({
+    name: "openbot_computer_navigate",
+    render: ({ result, status, toolCallId }) => (
+      <NavigationCard
+        announceActivity
+        computerId={bot.current}
+        result={result}
+        status={status}
+        toolCallId={toolCallId}
+      />
+    ),
   });
 
   useFrontendTool({
@@ -659,8 +709,27 @@ export function ComputerTools() {
               : "Nobody took control. Say what you still need rather than trying to do it yourself.",
       };
     },
-    // Rendered by ComputerView as the take-the-wheel prompt.
-    render: () => null,
+    render: ({ result, status, toolCallId }) => (
+      <HelpCard
+        computerId={bot.current}
+        result={result}
+        status={status}
+        toolCallId={toolCallId}
+      />
+    ),
+  });
+
+  // The provider executes the request; this renderer supplies the same live takeover card.
+  useRenderTool({
+    name: "openbot_computer_request_help",
+    render: ({ result, status, toolCallId }) => (
+      <HelpCard
+        computerId={bot.current}
+        result={result}
+        status={status}
+        toolCallId={toolCallId}
+      />
+    ),
   });
 
   useFrontendTool({

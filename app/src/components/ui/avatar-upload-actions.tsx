@@ -37,7 +37,7 @@ export function AvatarUploadActions({
   return (
     <div className="flex flex-col items-end gap-1.5">
       <input
-        accept="image/png,image/jpeg,image/webp"
+        accept="image/png,image/jpeg,image/webp,image/gif"
         aria-label={`Choose ${label}`}
         className="sr-only"
         disabled={disabled || saving}

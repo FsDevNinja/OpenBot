@@ -13,9 +13,9 @@ import {
   channelAgents,
   channelMemberships,
   channels,
+  channelThreads,
   credentialKind,
   credentials,
-  channelThreads,
   mcpUserCredentials,
   sessions,
   userRoles,
@@ -201,6 +201,18 @@ describe("OpenBot database schema", () => {
         primary: false,
       },
       {
+        name: "avatar_preset_shape",
+        notNull: false,
+        hasDefault: false,
+        primary: false,
+      },
+      {
+        name: "avatar_preset_color",
+        notNull: false,
+        hasDefault: false,
+        primary: false,
+      },
+      {
         name: "avatar_image",
         notNull: false,
         hasDefault: false,
@@ -378,6 +390,22 @@ describe("OpenBot database schema", () => {
     expect(migration).toContain(
       `ALTER TABLE "agent_profiles" ADD COLUMN "callback_token_issued_at" timestamp with time zone;`,
     );
+  });
+
+  test("adds bounded avatar presets in their own migration", async () => {
+    const migration = await readFile(
+      new URL("../drizzle/0033_strong_pandemic.sql", import.meta.url),
+      "utf8",
+    );
+    expect(migration).toContain(
+      `ALTER TABLE "agent_profiles" ADD COLUMN "avatar_preset_shape" integer;`,
+    );
+    expect(migration).toContain(
+      `ALTER TABLE "agent_profiles" ADD COLUMN "avatar_preset_color" integer;`,
+    );
+    expect(migration).toContain("agent_profiles_avatar_preset_pair");
+    expect(migration).toContain("agent_profiles_avatar_preset_shape_range");
+    expect(migration).toContain("agent_profiles_avatar_preset_color_range");
   });
 
   test("keeps the agent profile migration aligned with the schema", async () => {

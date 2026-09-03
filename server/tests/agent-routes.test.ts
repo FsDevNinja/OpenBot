@@ -42,6 +42,7 @@ function profile(overrides: Partial<AgentProfile> = {}): AgentProfile {
     title: validInput.title,
     roleDescription: validInput.roleDescription,
     avatarSeed: "expense-manager",
+    avatarPreset: null,
     hasCustomAvatar: false,
     avatarUpdatedAt: new Date(0),
     visibility: validInput.visibility,
@@ -89,6 +90,15 @@ function fakeStore(
       return profile({
         id,
         hasCustomAvatar: image !== null,
+        avatarUpdatedAt: new Date(1),
+      });
+    },
+    async setAvatarPreset(receivedActor, id, preset) {
+      calls.push(["setAvatarPreset", receivedActor, id, preset]);
+      return profile({
+        id,
+        avatarPreset: preset,
+        hasCustomAvatar: false,
         avatarUpdatedAt: new Date(1),
       });
     },
@@ -487,6 +497,36 @@ describe("agent lifecycle routes", () => {
     expect(store.calls).toEqual([]);
   });
 
+  test("validates and stores a transparent animated avatar preset", async () => {
+    const store = fakeStore();
+    const app = appFor(store);
+
+    const saved = await app.request("http://openbot.test/agent-1/avatar", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ preset: { shape: 6, color: 9 } }),
+    });
+    expect(saved.status).toBe(200);
+    expect(store.calls).toEqual([
+      ["setAvatarPreset", actor, "agent-1", { shape: 6, color: 9 }],
+    ]);
+    expect(await json(saved)).toEqual({
+      agent: expect.objectContaining({
+        avatarPreset: { shape: 6, color: 9 },
+        avatarUrl: null,
+      }),
+    });
+
+    store.calls.length = 0;
+    const refused = await app.request("http://openbot.test/agent-1/avatar", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ preset: { shape: 8, color: 9 } }),
+    });
+    expect(refused.status).toBe(400);
+    expect(store.calls).toEqual([]);
+  });
+
   test("serves avatar bytes only through an accessible coworker", async () => {
     const store = fakeStore({
       async avatar(receivedActor, id) {
@@ -533,6 +573,7 @@ describe("agent lifecycle routes", () => {
           title: validInput.title,
           roleDescription: validInput.roleDescription,
           avatarSeed: "expense-manager",
+          avatarPreset: null,
           avatarUrl: null,
           visibility: "private",
           hidden: false,
@@ -549,6 +590,7 @@ describe("agent lifecycle routes", () => {
           title: validInput.title,
           roleDescription: validInput.roleDescription,
           avatarSeed: "expense-manager",
+          avatarPreset: null,
           avatarUrl: null,
           visibility: "private",
           hidden: false,
@@ -565,6 +607,7 @@ describe("agent lifecycle routes", () => {
           title: validInput.title,
           roleDescription: validInput.roleDescription,
           avatarSeed: "expense-manager",
+          avatarPreset: null,
           avatarUrl: null,
           visibility: "public",
           hidden: false,

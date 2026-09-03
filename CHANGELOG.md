@@ -8,6 +8,18 @@ Newest first. `Unreleased` is what is on `main` and not yet tagged.
 
 ## Unreleased
 
+### Bot faces feel alive without confusing personality with status
+
+Generated Bot avatars now have transparent OpenBot shape-and-colour presets with subtle breathing,
+wandering white eyes, and blinking. A Bot owner can choose among eight shapes and eleven colours or
+reset to its deterministic default. The shape itself is the face; there is no generated background
+disc. The selected face appears everywhere that Bot is represented, respects the person's
+reduced-motion preference, and remains distinct from the three-dot working badge.
+
+People and Bot owners can also upload animated GIF avatars in addition to PNG, JPEG, and WebP. GIF
+signatures and logical dimensions are checked at the server boundary, then their original bytes are
+served unchanged so the chosen animation is not flattened.
+
 ### Every coworker can hand work to another coworker
 
 Provider-backed and custom AG-UI coworkers can now use the same directional **Bots it may ask**

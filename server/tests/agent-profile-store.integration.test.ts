@@ -24,8 +24,8 @@ import {
   agents,
   channelAgents,
   channels,
-  deploymentPackages,
   channelThreads,
+  deploymentPackages,
   users,
 } from "../src/db/schema";
 import { TEST_POOL } from "./support/database";
@@ -598,6 +598,17 @@ describe("agent profile store integration", () => {
     await expect(
       store.setAvatar(owner, packageAgent.agentId, null),
     ).rejects.toThrow("cannot be managed");
+
+    const preset = await store.setAvatarPreset(owner, userAgent.agentId, {
+      shape: 7,
+      color: 10,
+    });
+    expect(preset.avatarPreset).toEqual({ shape: 7, color: 10 });
+    expect(preset.hasCustomAvatar).toBe(false);
+    expect(await store.avatar(owner, userAgent.agentId)).toBeNull();
+
+    const reset = await store.setAvatarPreset(owner, userAgent.agentId, null);
+    expect(reset.avatarPreset).toBeNull();
   });
 
   test("duplicates a profile as a caller-owned private agent with copied presentation fields", async () => {
@@ -611,6 +622,15 @@ describe("agent profile store integration", () => {
       avatarSeed: "source-avatar",
       avatarImage: "data:image/png;base64,source",
     });
+    await store.setAvatarPreset(owner, source.agentId, {
+      shape: 4,
+      color: 8,
+    });
+    await store.setAvatar(
+      owner,
+      source.agentId,
+      "data:image/png;base64,source",
+    );
     await store.setHidden(owner, source.agentId, true);
 
     const duplicate = await store.duplicate(owner, source.agentId);
@@ -623,6 +643,7 @@ describe("agent profile store integration", () => {
       title: source.title,
       roleDescription: source.roleDescription,
       avatarSeed: source.avatarSeed,
+      avatarPreset: { shape: 4, color: 8 },
       hasCustomAvatar: true,
       visibility: "private",
       ownerUserId: owner.id,

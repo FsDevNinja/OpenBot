@@ -235,6 +235,7 @@ function ChannelRow({
         channelId={channel.id}
         participantIds={channel.agentIds}
         participantImages={channel.avatarUrls}
+        participantPresets={channel.avatarPresets}
         name={channel.name}
         lastMessage={channel.lastMessage ?? undefined}
         lastMessageAt={

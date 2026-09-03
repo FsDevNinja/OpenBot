@@ -4,10 +4,13 @@ import {
   avatarUrl,
   MAX_AVATAR_BYTES,
   parseAvatarImage,
+  parseAvatarPreset,
 } from "../src/avatar";
 
 const ONE_PIXEL_PNG =
   "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+const ONE_PIXEL_GIF =
+  "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==";
 
 describe("avatar image validation", () => {
   test("accepts a bounded image and the explicit reset", () => {
@@ -32,12 +35,22 @@ describe("avatar image validation", () => {
     );
   });
 
+  test("accepts and serves a GIF avatar without flattening its animation", () => {
+    expect(parseAvatarImage(ONE_PIXEL_GIF)).toEqual({
+      ok: true,
+      value: ONE_PIXEL_GIF,
+    });
+    expect(avatarResponse(ONE_PIXEL_GIF).headers.get("content-type")).toBe(
+      "image/gif",
+    );
+  });
+
   test("does not trust the data URL MIME label", () => {
     const disguised = ONE_PIXEL_PNG.replace("image/png", "image/jpeg");
 
     expect(parseAvatarImage(disguised)).toEqual({
       ok: false,
-      error: "Avatar image does not match its PNG, JPEG, or WebP format.",
+      error: "Avatar image does not match its PNG, JPEG, WebP, or GIF format.",
     });
   });
 
@@ -61,6 +74,33 @@ describe("avatar image validation", () => {
     ).toEqual({
       ok: false,
       error: "Avatar image dimensions must be at most 4096 by 4096 pixels.",
+    });
+  });
+});
+
+describe("avatar preset validation", () => {
+  test("accepts every bounded preset and the explicit reset", () => {
+    expect(parseAvatarPreset({ shape: 0, color: 0 })).toEqual({
+      ok: true,
+      value: { shape: 0, color: 0 },
+    });
+    expect(parseAvatarPreset({ shape: 7, color: 10 })).toEqual({
+      ok: true,
+      value: { shape: 7, color: 10 },
+    });
+    expect(parseAvatarPreset(null)).toEqual({ ok: true, value: null });
+  });
+
+  test.each([
+    undefined,
+    { shape: -1, color: 0 },
+    { shape: 8, color: 0 },
+    { shape: 0, color: 11 },
+    { shape: 1.5, color: 0 },
+  ])("rejects an invalid preset: %o", (preset) => {
+    expect(parseAvatarPreset(preset)).toEqual({
+      ok: false,
+      error: "Choose a valid avatar shape and colour.",
     });
   });
 });

@@ -1,5 +1,7 @@
 export type AgentVisibility = "public" | "private";
 
+export type AgentAvatarPreset = { shape: number; color: number };
+
 export type AgentActor = {
   id: string;
   role: "admin" | "user";
@@ -11,6 +13,7 @@ export type AgentProfile = {
   title: string;
   roleDescription: string;
   avatarSeed: string;
+  avatarPreset: AgentAvatarPreset | null;
   /** Whether an authenticated image endpoint has bytes to serve. */
   hasCustomAvatar: boolean;
   /** Content version for immutable avatar URLs, without selecting the image payload. */

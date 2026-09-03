@@ -110,6 +110,7 @@ function RouteComponent() {
                   <ChannelAvatar
                     participantIds={[item.id]}
                     participantImages={[item.avatarUrl]}
+                    participantPresets={[item.avatarPreset ?? null]}
                     size={24}
                   />
                   {item.name}
