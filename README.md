@@ -111,19 +111,19 @@ Leave `EMBEDDED_POSTGRES` off and set `DATABASE_URL` to point at a database you 
 
 ## Try it
 
-- Open `/bot` and ask: `Open news.ycombinator.com and tell me the top story.`
+- Open an agent from the sidebar and ask: `Open news.ycombinator.com and tell me the top story.`
 - Ask the Bot to fill out <https://httpbin.org/forms/post>, then inspect `/admin/audit`.
 - Open `/admin/boundaries`, add a deny rule or preset, and retry the same browser action.
-- Create a coworker from `/agents`, give it a standing role, and start a channel with it.
+- Create an agent from `/agents`, give it a standing role, and open its conversation.
 
 ## Main surfaces
 
 | Route                | Purpose                                                            |
 | -------------------- | ------------------------------------------------------------------ |
-| `/`                  | Start and browse channels.                                         |
-| `/agents`            | Create, edit, brand, duplicate, hide, delete, and launch coworkers. |
-| `/channel/:id`       | Converse with one coworker, watch its screen, and see what it ran. |
-| `/bot`               | Direct chat with a Bot; `?agent=<id>` selects one.                 |
+| `/`                  | Open agents and browse explicit group channels.                    |
+| `/agents`            | Create, edit, brand, duplicate, hide, delete, and launch agents.   |
+| `/channel/:id`       | Converse with an agent or group and see what it ran.               |
+| `/bot`               | Compatibility link that opens an agent's canonical conversation.  |
 | `/skills`            | Create and enable personal skills.                                 |
 | `/settings`          | Personal profile, avatar, and user preferences.                    |
 | `/settings/providers` | Connect your own model-provider accounts for agents.              |

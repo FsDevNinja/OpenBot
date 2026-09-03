@@ -4,10 +4,11 @@ import type { AppVariables } from "../auth/guards";
 import type { ThreadIdentity } from "./thread-identity";
 
 /**
- * A thread id for a conversation this deployment keeps no channel for.
+ * A thread id for a runtime conversation this deployment keeps no channel for.
  *
- * Direct Bot chat generates an id in the browser. Minting it here puts those threads in the same
- * deployment namespace as every channel's.
+ * The smoke-test API and integrations can still exercise the runtime without creating a product
+ * conversation. Minting the id here puts those threads in the same deployment namespace as every
+ * canonical agent conversation and group channel.
  *
  * Behind the session guard because a thread id is the name of somewhere a conversation will be
  * stored, and there is no reason for anybody signed out to be handed one.

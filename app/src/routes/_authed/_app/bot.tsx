@@ -1,26 +1,17 @@
-import type { Message } from "@ag-ui/core";
-import { IconPlus } from "@tabler/icons-react";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
-import { useCallback, useEffect, useRef, useState } from "react";
-import { ConversationView } from "@/components/channels/conversation-view";
+import { useEffect } from "react";
 import { SidebarToggleBar } from "@/components/layout/sidebar-toggle";
-import { Button } from "@/components/ui/button";
-import { useActiveBot } from "@/lib/agent/active-bot";
-import { useBotThread } from "@/lib/agent/bot-thread";
-import { ConversationProvider } from "@/lib/agent/conversation";
-import { repairUnansweredToolCalls } from "@/lib/agent/repair-history";
-import { stoppedReason } from "@/lib/agent/stopped-turn";
-import { readThreadMessages } from "@/lib/agent/thread-messages";
 import { agentListQueryOptions } from "@/lib/agents/queries";
-import { newId } from "@/lib/new-id";
-import {
-  connectionMentionInstructions,
-  useConnectionMentions,
-} from "@/lib/plugins/connection-mentions";
-import { useSkillCommands } from "@/lib/plugins/skill-commands";
-import { useAgent, useOpenBotRuntime } from "@/lib/runtime/provider";
+import { directChannelMutationOptions } from "@/lib/channels/mutations";
 
+/**
+ * Compatibility route for links made before direct Bot chat joined the channel roster.
+ *
+ * The old screen kept an unrelated thread id in localStorage and exposed "New chat", which let one
+ * Bot split into several invisible histories. Resolve the same agent through the server's canonical
+ * direct-conversation path now, then hand the browser to the one conversation surface.
+ */
 export const Route = createFileRoute("/_authed/_app/bot")({
   component: RouteComponent,
   validateSearch: (search: Record<string, unknown>): { agent?: string } => ({
@@ -33,153 +24,68 @@ function RouteComponent() {
   const { data: agents, isPending } = useQuery(agentListQueryOptions());
   const agentId = agent ?? agents?.[0]?.id;
   const bot = agents?.find((candidate) => candidate.id === agentId);
+
   if (isPending) return null;
   if (!agentId || !bot) {
     return (
-      <div className="flex h-screen items-center justify-center p-6">
-        <p className="text-muted-foreground text-sm">
-          {agent
-            ? `This deployment has no Bot called "${agent}".`
-            : "This deployment has no Bots yet."}
-        </p>
+      <div className="flex h-screen flex-col">
+        <SidebarToggleBar />
+        <div className="flex flex-1 items-center justify-center p-6">
+          <p className="text-muted-foreground text-sm">
+            {agent
+              ? `This deployment has no agent called "${agent}".`
+              : "This deployment has no agents yet."}
+          </p>
+        </div>
       </div>
     );
   }
-  return <BotChat agentId={agentId} key={agentId} name={bot.name} />;
+
+  return <OpenCanonicalConversation agentId={agentId} />;
 }
 
-function BotChat({ agentId, name }: { agentId: string; name: string }) {
-  useActiveBot(agentId);
-  const { threadId, history, startNew } = useBotThread(agentId);
+function OpenCanonicalConversation({ agentId }: { agentId: string }) {
+  const queryClient = useQueryClient();
+  const navigate = Route.useNavigate();
+  const direct = useMutation(directChannelMutationOptions(queryClient));
+  const { mutateAsync } = direct;
+
+  useEffect(() => {
+    let current = true;
+    void mutateAsync(agentId)
+      .then((channel) => {
+        if (!current) return;
+        void navigate({
+          params: { channelId: channel.id },
+          replace: true,
+          to: "/channel/$channelId",
+        });
+      })
+      // The mutation owns and renders the error. Catch here so a failed redirect does not also
+      // become an unhandled browser rejection.
+      .catch(() => undefined);
+    return () => {
+      current = false;
+    };
+  }, [agentId, mutateAsync, navigate]);
 
   return (
     <div className="flex h-screen flex-col">
       <SidebarToggleBar />
-      <header className="border-b px-6 py-3">
-        <div className="flex items-baseline justify-between">
-          <h1 className="text-lg font-semibold">{name}</h1>
-          <Button onClick={startNew} size="sm" variant="ghost">
-            <IconPlus />
-            New chat
-          </Button>
-        </div>
-        <p className="text-sm text-muted-foreground">
-          Ask it to open a page and watch it work.
-        </p>
-      </header>
-      {history === "unavailable" ? (
+      <div className="flex flex-1 items-center justify-center p-6">
         <p
-          className="border-b bg-destructive/10 px-6 py-2 text-destructive text-sm"
-          role="alert"
+          className={
+            direct.error
+              ? "text-destructive text-sm"
+              : "text-muted-foreground text-sm"
+          }
+          role={direct.error ? "alert" : "status"}
         >
-          Earlier messages could not be loaded. This conversation was kept
-          rather than discarded.
+          {direct.error
+            ? direct.error.message
+            : "Opening this agent's conversation…"}
         </p>
-      ) : null}
-      <div className="min-h-0 flex-1">
-        {threadId ? (
-          <NativeBotConversation
-            agentId={agentId}
-            key={`${agentId}:${threadId}`}
-            name={name}
-            threadId={threadId}
-          />
-        ) : null}
       </div>
     </div>
-  );
-}
-
-function NativeBotConversation({
-  agentId,
-  name,
-  threadId,
-}: {
-  agentId: string;
-  name: string;
-  threadId: string;
-}) {
-  const { agent } = useAgent({ agentId, threadId });
-  const { runtime } = useOpenBotRuntime();
-  const commands = useSkillCommands(agentId);
-  const connectionMentions = useConnectionMentions();
-  const [restoring, setRestoring] = useState(true);
-  const [stopped, setStopped] = useState<string | null>(null);
-  const [turns, setTurns] = useState(0);
-  const turnRef = useRef(0);
-
-  useEffect(() => {
-    let current = true;
-    void readThreadMessages(threadId, agentId).then((stored) => {
-      if (!current) return;
-      agent.setMessages(stored.messages as Message[]);
-      setRestoring(false);
-    });
-    return () => {
-      current = false;
-    };
-  }, [agent, agentId, threadId]);
-
-  useEffect(() => {
-    const subscription = agent.subscribe({
-      onRunInitialized: () => setStopped(null),
-      onRunErrorEvent: ({ event }) => setStopped(stoppedReason(event.message)),
-      onRunFailed: ({ error }) => setStopped(stoppedReason(error)),
-    });
-    return () => subscription.unsubscribe();
-  }, [agent]);
-
-  const say = async (text: string, instructions: string[] = []) => {
-    const trimmed = text.trim();
-    if (!trimmed) return;
-    turnRef.current += 1;
-    setTurns(turnRef.current);
-    try {
-      for (const instruction of instructions) {
-        agent.addMessage({ id: newId(), role: "system", content: instruction });
-      }
-      agent.addMessage({ id: newId(), role: "user", content: trimmed });
-      const repaired = repairUnansweredToolCalls(agent.messages);
-      if (repaired !== agent.messages) agent.setMessages(repaired as Message[]);
-      await runtime.runAgent({ agent });
-    } finally {
-      turnRef.current -= 1;
-      setTurns(turnRef.current);
-    }
-  };
-  const sayRef = useRef(say);
-  sayRef.current = say;
-  const ask = useCallback((text: string) => void sayRef.current(text), []);
-  const busy = turns > 0 || agent.isRunning;
-
-  return (
-    <ConversationProvider ask={ask}>
-      <ConversationView
-        agents={[{ id: agentId, name }]}
-        busy={busy}
-        commands={commands}
-        connections={connectionMentions}
-        messages={agent.messages as Message[]}
-        onStop={() => runtime.stopAgent({ agent })}
-        onSubmit={(draft) =>
-          say(draft.text, [
-            ...draft.commandIds.flatMap((id) => {
-              const prompt = commands.find(
-                (command) => command.id === id,
-              )?.prompt;
-              return prompt ? [prompt] : [];
-            }),
-            ...connectionMentionInstructions(
-              draft.connectionIds,
-              connectionMentions,
-            ),
-          ])
-        }
-        pending={busy}
-        restoring={restoring}
-        stoppable={agent.isRunning}
-        stopped={stopped ?? undefined}
-      />
-    </ConversationProvider>
   );
 }

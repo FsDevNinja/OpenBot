@@ -7,9 +7,10 @@ import { client, tryClient } from "@/lib/client";
 import { type AgentChannel, type ChannelPage, channelKeys } from "./queries";
 
 /**
- * Start a new channel with one or more coworkers.
+ * Create an explicit group channel with one or more coworkers.
  *
- * Deliberately not idempotent: every call creates a channel with its own thread.
+ * Deliberately not idempotent: every call creates a group with its own thread. One-to-one agent
+ * conversations must use `directChannelMutationOptions` instead.
  */
 export function createChannelMutationOptions(queryClient: QueryClient) {
   return mutationOptions({
@@ -17,12 +18,43 @@ export function createChannelMutationOptions(queryClient: QueryClient) {
       const response = await client("/api/channels", {
         method: "POST",
         body: { agentIds },
-        fallback: "Could not start a channel",
+        fallback: "Could not create this group",
       });
       return ((await response.json()) as { channel: AgentChannel }).channel;
     },
     onSuccess: () =>
       queryClient.invalidateQueries({ queryKey: channelKeys.all }),
+  });
+}
+
+/**
+ * Find or create the signed-in person's one durable conversation with a Bot.
+ *
+ * The server serializes concurrent opens of the same person/Bot pair. This mutation therefore
+ * returns the same channel whether it came from the sidebar, an Agent card, Home routing, or a
+ * legacy direct-Bot link.
+ */
+export function directChannelMutationOptions(queryClient: QueryClient) {
+  return mutationOptions({
+    mutationFn: async (agentId: string): Promise<AgentChannel> => {
+      const response = await client(
+        `/api/channels/direct/${encodeURIComponent(agentId)}`,
+        {
+          method: "POST",
+          fallback: "Could not open this agent's conversation",
+        },
+      );
+      return ((await response.json()) as { channel: AgentChannel }).channel;
+    },
+    onSuccess: (channel) => {
+      queryClient.setQueryData(channelKeys.detail(channel.id), channel);
+      /*
+       * Navigation only needs the detail seeded above. Do not hold the mutation in `pending` while
+       * the sidebar refetches: on a first open that made the row paint an intermediate loading state
+       * and then replace itself with a channel link before the route could change.
+       */
+      void queryClient.invalidateQueries({ queryKey: channelKeys.all });
+    },
   });
 }
 

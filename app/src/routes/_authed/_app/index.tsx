@@ -36,7 +36,7 @@ function RouteComponent() {
             {appConfig.brand.productName}
           </h2>
           <h1 className="text-2xl font-bold tracking-tight mt-1.5 text-center">
-            Start a new channel
+            Talk to your team
           </h1>
         </div>
         <div className="mt-8 w-full flex flex-col items-center">
@@ -46,8 +46,8 @@ function RouteComponent() {
             connections={connectionMentions}
             disabled={!fallback}
             onSubmit={async (draft) => {
-              // A channel is pinned to one coworker for the life of its thread, so the coworker is
-              // chosen now, before it is created. An `@` is an explicit choice and is honoured as-is.
+              // A direct conversation is pinned to one coworker for its whole life, so the coworker
+              // is chosen now. An `@` is an explicit choice and is honoured as-is.
               // With no `@`, the message is routed to the coworker it is for; if that routing cannot
               // run, it falls back to the same default the composer used to always use.
               setError(null);
@@ -93,8 +93,8 @@ function RouteComponent() {
             // Said out loud: a message that silently reaches somebody you did not choose is the
             // kind of surprise that costs trust the first time it happens.
             <p className="mt-2 w-full max-w-2xl text-xs text-muted-foreground text-center">
-              Sent to the coworker it is for. Type <code>@</code> to choose one
-              yourself.
+              Continue with the coworker this belongs to. Type <code>@</code> to
+              choose one yourself.
             </p>
           ) : null}
           {error ? (

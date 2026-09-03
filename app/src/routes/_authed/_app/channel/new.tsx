@@ -29,8 +29,9 @@ import { useSkillCommands } from "@/lib/plugins/skill-commands";
 import { newId } from "../../../../lib/new-id";
 
 /**
- * Creates the channel on first send. The selected coworker stays in the URL so profile links and
- * reloads preserve the pending recipient without creating an empty channel.
+ * Opens the selected coworker's canonical conversation on first send. The coworker stays in the
+ * URL so profile links and reloads preserve the pending recipient without creating an empty
+ * conversation.
  */
 export const Route = createFileRoute("/_authed/_app/channel/new")({
   validateSearch: (search: Record<string, unknown>): { agent?: string } => ({

@@ -37,8 +37,8 @@ import {
   channelAgents,
   channelMemberships,
   channels,
-  deploymentPackages,
   channelThreads,
+  deploymentPackages,
   users,
 } from "../src/db/schema";
 import { TEST_POOL } from "./support/database";
@@ -71,6 +71,10 @@ function fakeStore(
     async create(receivedActor, agentIds) {
       calls.push(["create", receivedActor, agentIds]);
       return channel({ agentIds });
+    },
+    async direct(receivedActor, agentId) {
+      calls.push(["direct", receivedActor, agentId]);
+      return channel({ agentIds: [agentId] });
     },
     async get(receivedActor, id) {
       calls.push(["get", receivedActor, id]);
@@ -225,6 +229,41 @@ describe("channel routes", () => {
     });
     expect(fetched.status).toBe(200);
     expect(await json(fetched)).toEqual({ channel: channel() });
+  });
+
+  test("finds or creates the authenticated person's canonical Bot conversation", async () => {
+    const store = fakeStore();
+    const app = appFor(store);
+
+    const response = await app.request("http://openbot.test/direct/agent-1", {
+      method: "POST",
+    });
+
+    expect(response.status).toBe(200);
+    expect(await json(response)).toEqual({
+      channel: {
+        id: "channel-1",
+        name: "Assistant channel",
+        agentIds: ["agent-1"],
+        threadId: "thread-1",
+        active: true,
+      },
+    });
+    expect(store.calls).toEqual([["direct", actor, "agent-1"]]);
+  });
+
+  test("keeps authentication in front of canonical Bot conversations", async () => {
+    const store = fakeStore();
+    const denied: MiddlewareHandler<{ Variables: AppVariables }> = (context) =>
+      Promise.resolve(context.json({ error: "denied" }, 401));
+    const app = appFor(store, denied);
+
+    const response = await app.request("http://openbot.test/direct/agent-1", {
+      method: "POST",
+    });
+
+    expect(response.status).toBe(401);
+    expect(store.calls).toEqual([]);
   });
 
   test.each([

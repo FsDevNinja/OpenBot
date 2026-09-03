@@ -1048,6 +1048,31 @@ export function createChannelRoutes(
     }
   });
 
+  /**
+   * Open the caller's canonical conversation with one Bot.
+   *
+   * Unlike POST /, this is deliberately idempotent at the product level: a Bot is a durable
+   * teammate, so clicking it tomorrow must return to the conversation from today instead of
+   * manufacturing another channel with the same roster. `store.direct` owns the cross-replica
+   * find-or-create lock and still validates that the caller may talk to the Bot.
+   */
+  routes.post("/direct/:agentId", requireUser, async (context) => {
+    const agentId = context.req.param("agentId").trim();
+    if (!agentId) {
+      return context.json(
+        { error: "Agent ID must be a non-empty string." },
+        400,
+      );
+    }
+
+    try {
+      const channel = await store.direct(context.var.actor, agentId);
+      return context.json({ channel: channelDto(channel) });
+    } catch (error) {
+      return mapStoreError(context, error);
+    }
+  });
+
   routes.get("/", requireUser, async (context) => {
     try {
       const url = new URL(context.req.url);

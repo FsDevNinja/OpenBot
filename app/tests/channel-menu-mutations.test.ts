@@ -2,6 +2,7 @@ import { afterEach, expect, test } from "bun:test";
 import { type InfiniteData, QueryClient } from "@tanstack/react-query";
 import {
   deleteChannelMutationOptions,
+  directChannelMutationOptions,
   markChannelReadMutationOptions,
   setChannelPinnedMutationOptions,
 } from "../src/lib/channels/mutations";
@@ -55,6 +56,36 @@ test("pinning PUTs the flag to the channel's pin route and invalidates the roste
   expect(seen[0]?.init?.method).toBe("PUT");
   expect(JSON.parse(String(seen[0]?.init?.body))).toEqual({ pinned: true });
   expect(invalidated).toEqual([{ queryKey: ["channels"] }]);
+});
+
+test("opening a Bot POSTs to its canonical direct route and seeds the detail cache", async () => {
+  const seen = capturingFetch(200, {
+    channel: {
+      id: "channel-1",
+      name: "Researcher",
+      agentIds: ["agent-1"],
+      threadId: "thread-1",
+      active: true,
+    },
+  });
+  const queryClient = new QueryClient();
+  const options = directChannelMutationOptions(queryClient);
+
+  const channel = await options.mutationFn?.("agent-1");
+  const afterSuccess = options.onSuccess?.(
+    channel as never,
+    "agent-1",
+    undefined as never,
+    undefined as never,
+  );
+
+  expect(seen).toHaveLength(1);
+  expect(seen[0]?.url).toBe("/api/channels/direct/agent-1");
+  expect(seen[0]?.init?.method).toBe("POST");
+  expect(queryClient.getQueryData(channelKeys.detail("channel-1"))).toEqual(
+    channel,
+  );
+  expect(afterSuccess).toBeUndefined();
 });
 
 test("deleting sends DELETE to the channel route and invalidates the roster", async () => {

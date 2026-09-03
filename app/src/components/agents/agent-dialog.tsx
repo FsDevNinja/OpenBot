@@ -366,9 +366,9 @@ function GeneralSection({
 
       <Item variant="muted">
         <ItemContent>
-          <ItemTitle>Start channel</ItemTitle>
+          <ItemTitle>Open conversation</ItemTitle>
           <ItemDescription>
-            Open a new channel with this coworker.
+            Continue your conversation with this coworker.
           </ItemDescription>
         </ItemContent>
         <ItemActions>
@@ -381,7 +381,7 @@ function GeneralSection({
             }
             size="sm"
           >
-            Start
+            Open
           </Button>
         </ItemActions>
       </Item>

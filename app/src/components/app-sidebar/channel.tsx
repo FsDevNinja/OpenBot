@@ -45,6 +45,7 @@ export const Channel = memo(function Channel({
   pinned,
   unread,
   busy,
+  kind = "group",
 }: {
   channelId: string;
   participantIds: string[];
@@ -55,6 +56,7 @@ export const Channel = memo(function Channel({
   pinned: boolean;
   unread: boolean;
   busy: boolean;
+  kind?: "agent" | "group";
 }) {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
@@ -160,7 +162,9 @@ export const Channel = memo(function Channel({
             }}
           >
             {pinned ? <IconPinnedOff /> : <IconPin />}
-            {pinned ? "Unpin channel" : "Pin channel"}
+            {pinned
+              ? `Unpin ${kind === "agent" ? "agent" : "group"}`
+              : `Pin ${kind === "agent" ? "agent" : "group"}`}
           </ContextMenuItem>
           <ContextMenuItem
             variant="destructive"
@@ -171,7 +175,7 @@ export const Channel = memo(function Channel({
             }}
           >
             <IconTrash />
-            Delete channel…
+            {kind === "agent" ? "Clear conversation…" : "Delete group…"}
           </ContextMenuItem>
         </ContextMenuContent>
       </ContextMenu>
@@ -188,9 +192,15 @@ export const Channel = memo(function Channel({
       >
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Delete {name}?</DialogTitle>
+            <DialogTitle>
+              {kind === "agent"
+                ? `Clear conversation with ${name}?`
+                : `Delete ${name}?`}
+            </DialogTitle>
             <DialogDescription>
-              The conversation will no longer appear for anyone in it.
+              {kind === "agent"
+                ? "This conversation will be removed, but the agent stays on your team and you can start fresh at any time."
+                : "The group conversation will no longer appear for anyone in it."}
             </DialogDescription>
           </DialogHeader>
           {deleteChannel.error ? (
@@ -214,7 +224,13 @@ export const Channel = memo(function Channel({
               size="sm"
               variant="destructive"
             >
-              {deleteChannel.isPending ? "Deleting…" : "Delete"}
+              {deleteChannel.isPending
+                ? kind === "agent"
+                  ? "Clearing…"
+                  : "Deleting…"
+                : kind === "agent"
+                  ? "Clear conversation"
+                  : "Delete group"}
             </Button>
           </DialogFooter>
         </DialogContent>

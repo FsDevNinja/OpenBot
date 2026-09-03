@@ -4,9 +4,9 @@ import { client } from "@/lib/client";
 /**
  * A channel as the browser sees it.
  *
- * `threadId` is what makes two channels with the same coworker independent conversations, and
- * `active` is false once a linked coworker has been deleted: the transcript stays readable, but
- * nothing more can be said in it.
+ * `threadId` holds the durable runtime context. Direct product flows reuse one channel per
+ * person/Bot pair; explicit groups still have their own channel. `active` is false once a linked
+ * coworker has been deleted: the transcript stays readable, but nothing more can be said in it.
  */
 export type AgentChannel = {
   id: string;

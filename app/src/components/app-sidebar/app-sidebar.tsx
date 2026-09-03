@@ -39,12 +39,14 @@ import {
   SidebarContent,
   SidebarFooter,
   SidebarGroup,
+  SidebarGroupLabel,
   SidebarHeader,
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarRail,
 } from "@/components/ui/sidebar";
+import { type AgentProfile, agentListQueryOptions } from "@/lib/agents/queries";
 import { signOutMutationOptions } from "@/lib/auth/mutations";
 import { currentUserQueryOptions } from "@/lib/auth/queries";
 import {
@@ -57,6 +59,7 @@ import { EASE_OUT, ENTRANCE_SECONDS } from "@/lib/motion";
 import { relativeTime } from "@/lib/relative-time";
 import { Button } from "../ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../ui/empty";
+import { AgentConversation } from "./agent-conversation";
 import { Channel } from "./channel";
 
 const appLinkOptions = { to: "/" } satisfies LinkOptions;
@@ -94,6 +97,64 @@ function matchingChannels(
   }
   return channels.filter((channel) =>
     [channel.name, channel.lastMessage].some((field) =>
+      field?.toLowerCase().includes(needle),
+    ),
+  );
+}
+
+export type AgentRosterEntry = {
+  agent: AgentProfile;
+  /** Absent until this person first opens the agent. */
+  channel?: ChannelSummary;
+};
+
+/**
+ * Turn channel-shaped persistence into a teammate-shaped roster.
+ *
+ * The channel list is already pinned-first and recent-first. Its first one-agent channel for a Bot
+ * is therefore the same canonical row `ChannelStore.direct` would find, including for development
+ * databases that predate the find-or-create route and contain duplicates. Extra legacy rows are
+ * hidden rather than presented as extra copies of the teammate. Multi-agent rows remain explicit
+ * groups.
+ */
+export function buildConversationRoster(
+  agents: AgentProfile[] | undefined,
+  channels: ChannelSummary[] | undefined,
+): { agents: AgentRosterEntry[]; groups: ChannelSummary[] } {
+  const orderedChannels = pinnedFirst(channels ?? []);
+  const agentById = new Map((agents ?? []).map((agent) => [agent.id, agent]));
+  const seen = new Set<string>();
+  const direct: AgentRosterEntry[] = [];
+
+  for (const channel of orderedChannels) {
+    if (channel.agentIds.length !== 1) continue;
+    const agentId = channel.agentIds[0];
+    if (!agentId || seen.has(agentId)) continue;
+    const agent = agentById.get(agentId);
+    if (!agent) continue;
+    seen.add(agentId);
+    direct.push({ agent, channel });
+  }
+
+  for (const agent of agents ?? []) {
+    if (seen.has(agent.id)) continue;
+    direct.push({ agent });
+  }
+
+  return {
+    agents: direct,
+    groups: orderedChannels.filter((channel) => channel.agentIds.length > 1),
+  };
+}
+
+function matchingAgents(
+  entries: AgentRosterEntry[],
+  query: string,
+): AgentRosterEntry[] {
+  const needle = query.trim().toLowerCase();
+  if (!needle) return entries;
+  return entries.filter(({ agent, channel }) =>
+    [agent.name, agent.title, channel?.lastMessage].some((field) =>
       field?.toLowerCase().includes(needle),
     ),
   );
@@ -194,12 +255,16 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const signOut = useMutation(signOutMutationOptions(queryClient));
+  const agents = useQuery(agentListQueryOptions());
   const channels = useInfiniteQuery(channelListQueryOptions());
   // One socket for the app, opened where the roster is kept live.
   useChannelEvents();
   const [search, setSearch] = useState("");
   const searching = search.trim().length > 0;
-  const visibleChannels = pinnedFirst(matchingChannels(channels.data, search));
+  const roster = buildConversationRoster(agents.data, channels.data);
+  const visibleAgents = matchingAgents(roster.agents, search);
+  const visibleGroups = matchingChannels(roster.groups, search);
+  const visibleCount = visibleAgents.length + visibleGroups.length;
   /*
    * FILTERING DOES NOT ANIMATE. Rows exit and relayout on every keystroke otherwise, which is a
    * list thrashing under somebody who is still typing — and the moving target is the very thing
@@ -207,7 +272,8 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
    * occasional; this is not.
    */
   const animateOrder =
-    !searching && (channels.data?.length ?? 0) <= MAX_ANIMATED_ROWS;
+    !searching &&
+    roster.agents.length + roster.groups.length <= MAX_ANIMATED_ROWS;
 
   const handleSignOut = async () => {
     await signOut.mutateAsync();
@@ -251,7 +317,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
             <SidebarMenuItem>
               <InputGroup className="bg-background text-sm rounded-lg h-9">
                 <InputGroupInput
-                  aria-label="Search channels"
+                  aria-label="Search agents and groups"
                   onChange={(event) => setSearch(event.target.value)}
                   placeholder="Search..."
                   value={search}
@@ -268,11 +334,11 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
              * the box has to say so and quote it back — told "you don't have channels yet" while
              * holding a typo, a person reads their conversations as gone.
              */}
-            {searching && visibleChannels.length === 0 ? (
+            {searching && visibleCount === 0 ? (
               <div className="py-4">
                 <Empty className="border border-dashed min-h-[40dvh]">
                   <EmptyHeader>
-                    <EmptyTitle>No channels match your search</EmptyTitle>
+                    <EmptyTitle>No agents or groups match</EmptyTitle>
                     <EmptyDescription className="text-pretty">
                       Nothing here is named “{search.trim()}”, and nobody has
                       said it recently either.
@@ -281,21 +347,48 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                 </Empty>
               </div>
             ) : null}
-            {!searching && channels.data?.length === 0 ? (
+            {!searching &&
+            !agents.isPending &&
+            !channels.isPending &&
+            roster.agents.length === 0 &&
+            roster.groups.length === 0 ? (
               <div className="py-4">
                 <Empty className="border border-dashed min-h-[40dvh]">
                   <EmptyHeader>
-                    <EmptyTitle>You don't have channels yet</EmptyTitle>
+                    <EmptyTitle>You don't have any agents yet</EmptyTitle>
                     <EmptyDescription className="text-pretty">
-                      Start talking to agents and your channels will appear
-                      here.
+                      Create an agent to start building your team.
                     </EmptyDescription>
                   </EmptyHeader>
                 </Empty>
               </div>
             ) : null}
+            {visibleAgents.length > 0 ? (
+              <SidebarGroupLabel className="px-2">Agents</SidebarGroupLabel>
+            ) : null}
             <AnimatePresence initial={false}>
-              {visibleChannels.map((channel) => (
+              {visibleAgents.map(({ agent, channel }) => (
+                <motion.div
+                  animate={{ opacity: 1, transform: "translateY(0px)" }}
+                  initial={{ opacity: 0, transform: "translateY(-8px)" }}
+                  key={agent.id}
+                  layout={animateOrder ? "position" : false}
+                >
+                  <AgentConversation
+                    agent={agent}
+                    channel={channel}
+                    unread={channel ? hasUnseenActivity(channel) : false}
+                  />
+                </motion.div>
+              ))}
+            </AnimatePresence>
+            {visibleGroups.length > 0 ? (
+              <SidebarGroupLabel className="mt-2 px-2">
+                Groups
+              </SidebarGroupLabel>
+            ) : null}
+            <AnimatePresence initial={false}>
+              {visibleGroups.map((channel) => (
                 <ChannelRow
                   key={channel.id}
                   animateOrder={animateOrder}
@@ -344,7 +437,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
               <div className="size-[28px] flex items-center justify-center">
                 <IconBolt />
               </div>
-              <span className="text-sm trackint-tight">Agents</span>
+              <span className="text-sm trackint-tight">Manage agents</span>
             </SidebarMenuButton>
           </SidebarMenuItem>
           {/* Routines live on each coworker's own dialog now, not as a nav destination: the

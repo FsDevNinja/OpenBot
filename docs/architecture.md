@@ -108,17 +108,20 @@ newest first.
 
 Activity is held in the browser for the open conversation and is gone on reload. It is a window rather than a record; the record is the audit trail, which is server-side, survives restarts, and is what an investigation reads. A saved file contributes its path and size and never its contents, matching the write route, which declines to echo them because a Bot may be saving something it was told in confidence.
 
-## Coworkers and channels
+## Agents and conversations
 
-A coworker is a durable Bot profile:
+An agent is a durable Bot profile:
 
 - `agents` stores runtime identity and endpoint/key reference.
 - `agent_profiles` stores name, title, role, avatar seed or custom image, owner, visibility, and
   deletion state.
 - `agent_preferences` stores per-user roster state.
 
-A channel is a conversation that references a native runtime thread through `channel_threads`.
-Starting a new channel creates a new thread; the runtime itself does not point back at channels.
+A one-to-one conversation is canonical for a person/agent pair and references a native runtime
+thread through `channel_threads`. Opening the agent anywhere in the product resolves that same
+conversation. Explicit group channels are separate records and may include multiple agents; their
+multi-agent runtime routing is still a separate product capability. The runtime itself does not
+point back at either kind of conversation.
 
 A person's optional custom avatar lives on their `users` row. Both person and Bot images are served
 from authenticated, private, versioned routes; list responses carry those short URLs and never the
