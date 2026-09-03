@@ -14,6 +14,7 @@ import type { ZodType } from "zod";
 import { AbstractAvatar } from "@/components/agents/abstract-avatar";
 import { CallbackTokenPanel } from "@/components/agents/callback-token-panel";
 import { HandoffPanel } from "@/components/agents/handoff-panel";
+import { PluginMark } from "@/components/plugin-mark";
 import { RoutinesList } from "@/components/routines/routines-list";
 import { AvatarUploadActions } from "@/components/ui/avatar-upload-actions";
 import { Button } from "@/components/ui/button";
@@ -76,8 +77,17 @@ import {
   agentCapabilitiesQueryOptions,
   agentQueryOptions,
 } from "@/lib/agents/queries";
-import { agentPluginsQueryOptions } from "@/lib/plugins/queries";
-import { readToolName } from "@/lib/plugins/tool-name";
+import {
+  CAPABILITY_LABELS,
+  capabilityDescription,
+  connectorCapabilityLevel,
+} from "@/lib/plugins/capabilities";
+import { setAgentConnectorCapabilityMutationOptions } from "@/lib/plugins/mutations";
+import {
+  agentPluginsQueryOptions,
+  type ConnectorCapabilityLevel,
+  pluginsPageQueryOptions,
+} from "@/lib/plugins/queries";
 
 /**
  * A coworker, in a dialog with its own sidebar.
@@ -113,7 +123,7 @@ export function AgentDialog({
 
 const SECTIONS = [
   { id: "general", name: "General", icon: IconUser },
-  { id: "access", name: "Access", icon: IconPuzzle },
+  { id: "access", name: "Capabilities", icon: IconPuzzle },
   { id: "connection", name: "Connection", icon: IconPlugConnected },
   { id: "handoff", name: "Handoff", icon: IconArrowsExchange },
   { id: "routines", name: "Routines", icon: IconClock },
@@ -229,7 +239,7 @@ function AgentDialogBody({ agentId }: { agentId: string }) {
             {section === "general" ? (
               <GeneralSection agentId={agentId} profile={profile} />
             ) : section === "access" ? (
-              <AccessSection agentId={agentId} />
+              <AccessSection agentId={agentId} profile={profile} />
             ) : section === "connection" ? (
               <ConnectionSection agentId={agentId} profile={profile} />
             ) : section === "handoff" ? (
@@ -575,27 +585,34 @@ function VisibilityItem({
   );
 }
 
-/** "google-drive" as "Google Drive": the connector key, said the way a person would. */
-function connectorName(key: string): string {
-  return key
-    .split(/[-_]/)
-    .filter(Boolean)
-    .map((word) => word[0]?.toUpperCase() + word.slice(1))
-    .join(" ");
-}
-
 /**
- * What this coworker may reach when it works: its granted connectors, one row each, and its skills.
+ * Connector capabilities belong to the coworker, not to the workspace catalogue.
  *
- * Read from the same snapshot the runtime offers the Bot, so this shows what a run would actually
- * hold rather than a second opinion. Read-only on purpose — granting is an administrator's, made on
- * the Plugins screens, and a row of switches here would be a second place for the same decision.
+ * Administrators decide which connectors the workspace offers and draw its hard boundaries. The
+ * coworker's owner then chooses an understandable access level here; the server expands it into
+ * exact tool grants and the runtime continues checking every call.
  */
-function AccessSection({ agentId }: { agentId: string }) {
-  const plugins = useQuery(agentPluginsQueryOptions(agentId));
+function AccessSection({
+  agentId,
+  profile,
+}: {
+  agentId: string;
+  profile: AgentProfile;
+}) {
+  const queryClient = useQueryClient();
+  const heldPlugins = useQuery(agentPluginsQueryOptions(agentId));
+  const workspacePlugins = useQuery(pluginsPageQueryOptions());
+  const setCapability = useMutation(
+    setAgentConnectorCapabilityMutationOptions(queryClient),
+  );
 
-  if (plugins.isPending) return null;
-  if (plugins.error || !plugins.data) {
+  if (heldPlugins.isPending || workspacePlugins.isPending) return null;
+  if (
+    heldPlugins.error ||
+    !heldPlugins.data ||
+    workspacePlugins.error ||
+    !workspacePlugins.data
+  ) {
     return (
       <p className="text-sm text-destructive" role="alert">
         What this coworker may reach could not be loaded.
@@ -603,37 +620,25 @@ function AccessSection({ agentId }: { agentId: string }) {
     );
   }
 
-  /* One row per connector, carrying what a person recognises: the tools' names, not their count. */
-  const connectors = new Map<string, string[]>();
-  for (const tool of plugins.data.tools) {
-    const key = tool.ref.split("/")[0] ?? tool.ref;
-    let label = readToolName(tool.toolName).label;
-    /*
-     * Vendors prefix every tool with their own name — "Notion create pages" — which next to a row
-     * already titled Notion reads as a stutter. Stripped only as a leading word, and re-cased, so
-     * "Notion search" becomes "Search" while "Search notion pages" is left alone.
-     */
-    const prefix = `${key.toLowerCase()} `;
-    if (label.toLowerCase().startsWith(prefix)) {
-      const rest = label.slice(prefix.length);
-      label = rest ? rest[0]?.toUpperCase() + rest.slice(1) : label;
-    }
-    const labels = connectors.get(key) ?? [];
-    labels.push(label);
-    connectors.set(key, labels);
-  }
-  const skills = plugins.data.skills;
+  const held = new Set(heldPlugins.data.tools.map((tool) => tool.ref));
+  const servers = workspacePlugins.data.servers.filter(
+    (server) => server.tools.length > 0,
+  );
+  const catalogue = new Map(
+    workspacePlugins.data.catalogue.map((entry) => [entry.key, entry]),
+  );
+  const skills = heldPlugins.data.skills;
 
-  if (connectors.size === 0 && skills.length === 0) {
+  if (servers.length === 0 && skills.length === 0) {
     return (
       <Empty className="h-[180px] border border-dashed">
         <EmptyHeader>
           <EmptyTitle className="text-muted-foreground">
-            Nothing granted yet
+            No capabilities available
           </EmptyTitle>
           <EmptyDescription>
-            An administrator grants connectors and skills from the Plugins
-            screens. Until then this coworker can converse, and nothing more.
+            A workspace administrator has not enabled any connectors yet. This
+            coworker can still converse.
           </EmptyDescription>
         </EmptyHeader>
       </Empty>
@@ -643,26 +648,83 @@ function AccessSection({ agentId }: { agentId: string }) {
   return (
     <>
       <p className="text-sm text-muted-foreground">
-        What this coworker may reach when it works. Granted by an administrator
-        on the Plugins screens; anything not listed is refused when called.
+        Choose what this coworker can use. Workspace administrators decide which
+        connectors exist and set hard boundaries; each person still uses their
+        own connected account.
       </p>
+      {setCapability.error ? (
+        <p className="text-sm text-destructive" role="alert">
+          {setCapability.error.message}
+        </p>
+      ) : null}
       <div className="flex flex-col gap-2">
-        {[...connectors.entries()].map(([key, labels]) => (
-          <Item key={key} variant="muted">
-            <ItemContent>
-              <ItemTitle>{connectorName(key)}</ItemTitle>
-              <ItemDescription>
-                {labels.slice(0, 4).join(", ")}
-                {labels.length > 4 ? ` and ${labels.length - 4} more` : ""}
-              </ItemDescription>
-            </ItemContent>
-            <ItemActions>
-              <span className="text-sm text-muted-foreground tabular-nums">
-                {labels.length} {labels.length === 1 ? "tool" : "tools"}
-              </span>
-            </ItemActions>
-          </Item>
-        ))}
+        {servers.map((server) => {
+          const level = connectorCapabilityLevel(server, held);
+          const entry = catalogue.get(server.id);
+          const hasRead = server.tools.some(
+            (tool) => tool.operation === "read",
+          );
+          const hasNonDestructive = server.tools.some(
+            (tool) => tool.operation !== "delete",
+          );
+          return (
+            <Item key={server.id} variant="muted">
+              <PluginMark logoUrl={entry?.logoUrl} pluginKey={server.id} />
+              <ItemContent>
+                <ItemTitle>{server.title}</ItemTitle>
+                <ItemDescription className="line-clamp-none">
+                  {capabilityDescription(server, level, held)}
+                </ItemDescription>
+              </ItemContent>
+              <ItemActions>
+                {profile.canManage ? (
+                  <Select
+                    disabled={
+                      setCapability.isPending &&
+                      setCapability.variables?.serverId === server.id
+                    }
+                    items={CAPABILITY_LABELS}
+                    onValueChange={(next) => {
+                      if (next === level || next === "custom") return;
+                      setCapability.mutate({
+                        agentId,
+                        serverId: server.id,
+                        level: next as ConnectorCapabilityLevel,
+                      });
+                    }}
+                    value={level}
+                  >
+                    <SelectTrigger
+                      aria-label={`${server.title} capability`}
+                      className="w-36"
+                    >
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">No access</SelectItem>
+                      {hasRead ? (
+                        <SelectItem value="read">Read only</SelectItem>
+                      ) : null}
+                      {hasNonDestructive ? (
+                        <SelectItem value="write">Read and write</SelectItem>
+                      ) : null}
+                      <SelectItem value="delete">Full access</SelectItem>
+                      {level === "custom" ? (
+                        <SelectItem disabled value="custom">
+                          Custom
+                        </SelectItem>
+                      ) : null}
+                    </SelectContent>
+                  </Select>
+                ) : (
+                  <span className="text-sm text-muted-foreground">
+                    {CAPABILITY_LABELS[level]}
+                  </span>
+                )}
+              </ItemActions>
+            </Item>
+          );
+        })}
         {skills.map((skill) => (
           <Item key={skill.slug} variant="muted">
             <ItemContent>
@@ -675,6 +737,14 @@ function AccessSection({ agentId }: { agentId: string }) {
           </Item>
         ))}
       </div>
+      <p className="text-xs text-muted-foreground">
+        Account connections are personal. Anyone using a shared coworker must
+        connect their own account in{" "}
+        <Link className="underline" to="/settings/connected-accounts">
+          Settings
+        </Link>
+        .
+      </p>
     </>
   );
 }

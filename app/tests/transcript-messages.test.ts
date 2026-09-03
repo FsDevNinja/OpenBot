@@ -57,7 +57,10 @@ describe("seedMessage", () => {
 describe("the first-message stash", () => {
   test("hands the message to the channel that was just created", () => {
     stashFirstMessage("channel_a", "hello");
-    expect(takeFirstMessage("channel_a")).toBe("hello");
+    expect(takeFirstMessage("channel_a")).toEqual({
+      text: "hello",
+      instructions: [],
+    });
   });
 
   test("gives it up only once", () => {
@@ -73,8 +76,11 @@ describe("the first-message stash", () => {
 
   test("keeps two channels' messages apart", () => {
     stashFirstMessage("channel_c", "for c");
-    stashFirstMessage("channel_d", "for d");
-    expect(takeFirstMessage("channel_d")).toBe("for d");
-    expect(takeFirstMessage("channel_c")).toBe("for c");
+    stashFirstMessage("channel_d", "for d", ["Use GitHub tools."]);
+    expect(takeFirstMessage("channel_d")).toEqual({
+      text: "for d",
+      instructions: ["Use GitHub tools."],
+    });
+    expect(takeFirstMessage("channel_c")?.text).toBe("for c");
   });
 });

@@ -2,8 +2,12 @@ import { describe, expect, test } from "bun:test";
 import type { ComposerDraft } from "./draft";
 import { type QueuedMessage, reduceQueue } from "./queue";
 
-function draft(text: string, commandIds: string[] = []): ComposerDraft {
-  return { text, agentId: null, commandIds, isEmpty: false };
+function draft(
+  text: string,
+  commandIds: string[] = [],
+  connectionIds: string[] = [],
+): ComposerDraft {
+  return { text, agentId: null, commandIds, connectionIds, isEmpty: false };
 }
 
 /** Park one message and hand back the queue it produced, which is what every case starts from. */
@@ -12,10 +16,11 @@ function park(
   id: string,
   text: string,
   commandIds: string[] = [],
+  connectionIds: string[] = [],
 ): readonly QueuedMessage[] {
   return reduceQueue(queue, {
     busy: true,
-    draft: draft(text, commandIds),
+    draft: draft(text, commandIds, connectionIds),
     id,
     type: "submit",
   }).queue;
@@ -72,7 +77,12 @@ describe("submitting", () => {
 
     expect(result.run).toBeNull();
     expect(result.queue).toEqual([
-      { id: "one", text: "no, the other one", commandIds: [] },
+      {
+        id: "one",
+        text: "no, the other one",
+        commandIds: [],
+        connectionIds: [],
+      },
     ]);
   });
 
@@ -86,6 +96,18 @@ describe("submitting", () => {
       "second",
       "third",
     ]);
+  });
+
+  test("keeps connected-account mentions while the message waits", () => {
+    const queue = park(
+      [],
+      "one",
+      "use @GitHub to check the PR",
+      [],
+      ["composio-github"],
+    );
+
+    expect(queue[0]?.connectionIds).toEqual(["composio-github"]);
   });
 });
 
@@ -136,6 +158,22 @@ describe("settling", () => {
     expect(reduceQueue(queue, { type: "settle" }).run?.commandIds).toEqual([
       "search",
       "summarize",
+    ]);
+  });
+
+  test("carries each selected connected account into the combined turn once", () => {
+    let queue = park([], "one", "check @GitHub", [], ["composio-github"]);
+    queue = park(
+      queue,
+      "two",
+      "and @Notion",
+      [],
+      ["composio-notion", "composio-github"],
+    );
+
+    expect(reduceQueue(queue, { type: "settle" }).run?.connectionIds).toEqual([
+      "composio-github",
+      "composio-notion",
     ]);
   });
 
@@ -192,7 +230,12 @@ describe("removing", () => {
     const result = reduceQueue(queue, { id: "one", type: "remove" });
 
     expect(result.queue).toEqual([
-      { id: "two", text: "no, the other one", commandIds: [] },
+      {
+        id: "two",
+        text: "no, the other one",
+        commandIds: [],
+        connectionIds: [],
+      },
     ]);
   });
 });

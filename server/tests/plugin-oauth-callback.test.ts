@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { MiddlewareHandler } from "hono";
 import { Hono } from "hono";
 import type { AppVariables } from "../src/auth/guards";
-import { challengeFor, sealConnectState } from "../src/plugins/oauth";
+import { sealConnectState } from "../src/plugins/oauth";
 import { createPluginRoutes } from "../src/plugins/routes";
 
 /**
@@ -94,49 +94,23 @@ function callbackUrl(state: string): string {
   return `${CALLBACK}?code=code-1&state=${encodeURIComponent(state)}`;
 }
 
-describe("a consent that came back the way it left", () => {
-  test("the state minted by connect is the state the callback reads", async () => {
+describe("a legacy callback for a managed connector", () => {
+  test("does not redeem or store provider tokens", async () => {
     const recorded: Recorded[] = [];
     const hono = app({ recorded });
-
-    const started = await hono.request(
-      "http://t/api/plugins/servers/notion/connect",
-      { method: "POST" },
+    const state = await sealConnectState(
+      { userId: "user-1", serverId: "notion", verifier: "v-1" },
+      KEY,
     );
-    const { authorizationUrl } = (await started.json()) as {
-      authorizationUrl: string;
-    };
-    const authorization = new URL(authorizationUrl);
-    const state = authorization.searchParams.get("state") ?? "";
 
-    const asked = await withWillingVendor(async (asked) => {
+    const asked = await withWillingVendor(async (requests) => {
       const response = await hono.request(callbackUrl(state));
-      expect(response.headers.get("location")).toBe(
-        "https://app.example/settings/connected-accounts/notion",
-      );
-      return asked;
+      expect(response.headers.get("location")).toBe(FAILED);
+      return requests;
     });
 
-    expect(recorded).toEqual([
-      {
-        serverId: "notion",
-        userId: "user-1",
-        refreshToken: "rt-1",
-        scope: "read",
-      },
-    ]);
-    /*
-     * The verifier survived the round trip, and it survived it INSIDE the state rather than beside
-     * it: the code challenge the vendor was shown is the S256 of the verifier the callback redeemed
-     * with. That is the property the sealed state has to keep — it is unreadable, not lossy.
-     */
-    const verifier = asked[0]?.params.get("code_verifier") ?? "";
-    expect(verifier.length).toBeGreaterThanOrEqual(43);
-    expect(challengeFor(verifier)).toBe(
-      authorization.searchParams.get("code_challenge"),
-    );
-    // And it was never on the callback URL in a form anybody reading that URL could use.
-    expect(state).not.toContain(verifier);
+    expect(recorded).toEqual([]);
+    expect(asked).toEqual([]);
   });
 });
 

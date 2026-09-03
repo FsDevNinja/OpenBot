@@ -1,21 +1,14 @@
 /**
- * The catalogue of MCP servers this deployment will talk to, and the rule that decides admissibility.
+ * The catalogue of capabilities this deployment may enable, and the rule deciding admissibility.
  *
- * First-party only, and the list is frozen in code. A remote MCP server is a piece of somebody
- * else's software that our Bots hand credentials to and take instructions from, so "which servers"
- * is a decision to make once, in review, rather than one to leave to whoever is typing a URL into an
- * admin page at the time. Only servers the vendor themselves maintains are here. A community server
- * that wraps the same API is not equivalent: it is an extra party in the trust path with none of the
- * accountability, and the answer for a vendor without an official server is to wait for one.
+ * OpenBot-native capabilities are frozen here. Managed integrations are discovered from the
+ * deployment's Composio project, filtered to OAuth applications Composio owns, and translated into
+ * the same policy shape. The administrator still chooses which of those integrations the workspace
+ * enables; a user cannot supply an arbitrary server or toolkit name.
  *
- * Every host and path here comes from the vendor's published documentation. They are pinned rather
- * than discovered, because a URL this deployment will hand a credential to is a reviewed source
- * contract.
- *
- * Admissibility is fail-closed and checked against the pinned host, never against what a caller
- * supplied. A URL that does not exactly match a pinned host, or match one anchored per-instance
- * pattern, is refused. This is the control that stops "add an MCP server" from being a request
- * forgery primitive pointed at the deployment's own network.
+ * Remote managed tools always execute through the pinned Composio boundary. Direct custom MCP URLs
+ * take the separate, fail-closed URL-validation path below. In both cases the address that receives
+ * a credential is decided by reviewed code rather than by a model or browser request.
  */
 
 /**
@@ -29,6 +22,7 @@
 // The one place browsing and this check agree on: the addresses that hold the deployment's own
 // cloud credentials. `target.ts` imports nothing itself, so asking it here adds no dependency.
 import { isNeverAllowedHostname } from "../computer/target";
+import type { ManagedToolkit } from "./managed-connector";
 // Type-only, so naming the transport here creates no import cycle with the registry that resolves it.
 import type { TransportKind } from "./transport";
 
@@ -37,6 +31,15 @@ export type CatalogueAuth =
   | { kind: "none" }
   /** One token, held by the deployment, used for everybody. */
   | { kind: "deployment-bearer" }
+  /**
+   * The asker's private connection, held and refreshed by the named connector backend. OpenBot
+   * receives only backend-owned connection metadata and never provisions an OAuth application.
+   */
+  | {
+      kind: "managed-user";
+      provider: "composio";
+      toolkit: string;
+    }
   /**
    * First-party and in-process. There is no credential, because there is nothing to authenticate
    * to: the call runs against this deployment's own tables, as the person whose turn it is.
@@ -130,25 +133,21 @@ export type CatalogueEntry = {
    */
   transport?: TransportKind;
   docsUrl: string;
+  /** Who supplies this catalogue row. Runtime trust and connection ownership still live above. */
+  source?: "openbot" | "composio";
+  /** Optional presentation metadata returned by the managed catalogue. */
+  logoUrl?: string | null;
+  categories?: readonly string[];
+  toolsCount?: number | null;
 };
 
 /**
- * A short list, deliberately.
+ * Static runtime entries.
  *
- * Atlassian, Box, Slack, Salesforce and ServiceNow were here and were removed: each was a reviewed
- * source contract for a vendor nobody had connected, and a screen offering five untried connectors
- * asserts more than this deployment can stand behind. They are in the history if they are wanted
- * back, and re-adding one is a review of that vendor rather than a revert.
- *
- * `deployment-bearer` therefore has no entry using it. The shape stays because the call path still
- * needs it: a server an administrator added by URL has no catalogue entry at all, and that is the
- * branch it falls into.
- *
- * Routines is the first entry here that is not a remote vendor at all — no host to dial, nothing
- * outside this process to trust. It is in the catalogue anyway, on purpose rather than by oversight:
- * the catalogue is where a deployment decides which Bots may do what, and a Bot that can schedule its
- * own future runs is a capability worth that same deliberate grant, even though there is no vendor on
- * the other end of it.
+ * Drive and Notion keep their historical ids so an upgrade cannot orphan existing server, grant or
+ * connection rows. They are not the admin catalogue: the live Composio response supplies those
+ * choices and their presentation metadata. Routines is genuinely static because it runs inside
+ * OpenBot and has no provider catalogue or credential behind it.
  */
 export const CATALOGUE: readonly CatalogueEntry[] = Object.freeze([
   {
@@ -157,60 +156,21 @@ export const CATALOGUE: readonly CatalogueEntry[] = Object.freeze([
     vendor: "Google",
     summary: "Files in the Drive of whoever is asking.",
     /*
-     * Google publishes one MCP server per Workspace product, each on its own host: Gmail, Docs,
-     * Sheets, Slides, Calendar, Chat and People have their own. Drive is here because it is the one
-     * a question about a document needs. Each of the others is a further entry, not a flag on this
-     * one, so adding Gmail stays a reviewed decision about Gmail.
+     * Composio's managed Google Drive toolkit. It owns the OAuth application and private account
+     * connection; this host is descriptive catalogue metadata, never called with a provider token.
      */
-    /*
-     * The GA REST API, not `drivemcp.googleapis.com`.
-     *
-     * The MCP server was the original choice and is the better one on paper: vendor-maintained, no
-     * Drive-specific code here at all. It is gated behind the Google Workspace Developer Preview
-     * Program, and an unenrolled project is refused with `The caller does not have permission` —
-     * which describes the project, not the credential, so every check available locally reports a
-     * correct setup. Enrolment is a Workspace-account application with a stated turnaround of days.
-     *
-     * This host has been generally available since 2015. The MCP entry is one line away: set
-     * `transport` back to `mcp` and restore the host and path above. Tool names match Google's MCP
-     * server exactly, so grants survive the swap in either direction.
-     */
-    host: "https://www.googleapis.com",
-    path: "/drive/v3",
-    transport: "google-drive-rest",
-    /*
-     * The first vendor here that cannot be reached with a token an administrator pastes. Google
-     * issues no such token: access is an authorization-code grant belonging to a person. That is
-     * not a limitation to work around, it is the property this connector exists for — two people
-     * asking the same question should get the answers their own accounts can see.
-     */
-    auth: {
-      kind: "user-oauth",
-      authorizationUrl: "https://accounts.google.com/o/oauth2/v2/auth",
-      tokenUrl: "https://oauth2.googleapis.com/token",
-      revokeUrl: "https://oauth2.googleapis.com/revoke",
-      // Read-only, because nothing in this slice writes to anybody's Drive.
-      scopes: Object.freeze(["https://www.googleapis.com/auth/drive.readonly"]),
-      /*
-       * `offline` and `consent` are both load bearing FOR GOOGLE. Without `access_type=offline`
-       * Google returns no refresh token; without `prompt=consent` a reconnect returns none either.
-       * They are Google parameters, so they live on Google's entry.
-       */
-      authorizationParams: Object.freeze({
-        access_type: "offline",
-        prompt: "consent",
-      }),
-    },
-    /*
-     * Named writes even though the scope above makes Google refuse them.
-     *
-     * Belt and braces on purpose. The scope is what stops them; this list is what keeps a boundary
-     * written about writes covering them, so widening the scope later cannot quietly turn a write
-     * into something the policy engine has never heard of.
-     */
-    writeTools: Object.freeze(["create_file", "copy_file"]),
-    docsUrl:
-      "https://developers.google.com/workspace/guides/configure-mcp-servers",
+    host: "https://backend.composio.dev",
+    path: "/",
+    // Two people asking the same question use separate private connections and see their own Drive.
+    auth: Object.freeze({
+      kind: "managed-user",
+      provider: "composio",
+      toolkit: "googledrive",
+    }),
+    // Managed catalogue entries fail closed as writes in `classifyTool`; names can change upstream.
+    writeTools: Object.freeze([]),
+    docsUrl: "https://docs.composio.dev/toolkits/googledrive",
+    source: "composio",
   },
   {
     key: "notion",
@@ -218,53 +178,20 @@ export const CATALOGUE: readonly CatalogueEntry[] = Object.freeze([
     vendor: "Notion",
     summary: "Pages and databases of whoever is asking.",
     /*
-     * The hosted MCP server Notion runs, on the default MCP transport — the first entry to use
-     * it. Drive's REST adapter is a workaround for a preview-gated vendor; Notion's server is
-     * generally available, so this entry is the shape the catalogue was designed for.
+     * The same managed boundary as Drive: Composio provisions the app and keeps each person's
+     * credential; OpenBot keeps only its policy, grants and audit trail.
      */
-    host: "https://mcp.notion.com",
-    path: "/mcp",
-    auth: {
-      kind: "user-oauth",
-      // From https://mcp.notion.com/.well-known/oauth-authorization-server, verified live.
-      authorizationUrl: "https://mcp.notion.com/authorize",
-      tokenUrl: "https://mcp.notion.com/token",
-      // Notion's published revocation_endpoint IS its token endpoint — not a copy-paste mistake.
-      revokeUrl: "https://mcp.notion.com/token",
-      /*
-       * Notion has no scope strings and no read-only scope: access is per-page, chosen on the
-       * consent screen. `writeTools` below plus the action policy are the ENTIRE write barrier —
-       * there is no vendor-side scope backing them up.
-       */
-      scopes: Object.freeze([]),
-      clientRegistration: "dynamic",
-      registrationUrl: "https://mcp.notion.com/register",
-    },
-    /*
-     * The writing tools as the hosted server advertises them today. The hosted server advertises
-     * its tools, so a name here that does not match an advertised tool is not the risk — an
-     * advertised tool that is missing from this list is: {@link classifyTool} reads an unlisted
-     * but advertised name as a read, never as a write. That makes under-inclusion the failure
-     * mode, so this list has to lean over-inclusive rather than minimal, and reconciling it
-     * against the live tool list on the first Refresh tools is required, not cosmetic.
-     */
-    writeTools: Object.freeze([
-      "notion-convert-page-to-skill",
-      "notion-create-attachment",
-      "notion-create-comment",
-      "notion-create-database",
-      "notion-create-file-upload",
-      "notion-create-folder",
-      "notion-create-pages",
-      "notion-create-view",
-      "notion-duplicate-page",
-      "notion-move-pages",
-      "notion-update-data-source",
-      "notion-update-folder",
-      "notion-update-page",
-      "notion-update-view",
-    ]),
-    docsUrl: "https://developers.notion.com/guides/mcp/build-mcp-client",
+    host: "https://backend.composio.dev",
+    path: "/",
+    auth: Object.freeze({
+      kind: "managed-user",
+      provider: "composio",
+      toolkit: "notion",
+    }),
+    // Managed catalogue entries fail closed as writes in `classifyTool`; names can change upstream.
+    writeTools: Object.freeze([]),
+    docsUrl: "https://docs.composio.dev/toolkits/notion",
+    source: "composio",
   },
   {
     key: "routines",
@@ -287,6 +214,7 @@ export const CATALOGUE: readonly CatalogueEntry[] = Object.freeze([
       "delete_routine",
     ]),
     docsUrl: "https://github.com/CopilotKit/OpenBot/blob/main/docs/routines.md",
+    source: "openbot",
   },
 ]);
 
@@ -316,7 +244,76 @@ export function serverCredentialKind(entry: CatalogueEntry): "mcp" | null {
 }
 
 export function catalogueEntry(key: string): CatalogueEntry | null {
-  return BY_KEY.get(key) ?? null;
+  const compiled = BY_KEY.get(key);
+  if (compiled) return compiled;
+
+  const toolkit = composioToolkitSlug(key);
+  if (!toolkit) return null;
+  const title = toolkit
+    .split(/[-_]+/)
+    .filter(Boolean)
+    .map((part) => `${part[0]?.toUpperCase() ?? ""}${part.slice(1)}`)
+    .join(" ");
+  return managedCatalogueEntry({
+    slug: toolkit,
+    name: title,
+    description: `Use ${title} through your own connected account.`,
+    logoUrl: null,
+    categories: [],
+    toolsCount: null,
+  });
+}
+
+/** Existing ids remain stable so upgrades do not orphan grants or connected-account links. */
+const LEGACY_COMPOSIO_KEYS = new Map([
+  ["googledrive", "google-drive"],
+  ["notion", "notion"],
+]);
+const LEGACY_COMPOSIO_TOOLKITS = new Map(
+  [...LEGACY_COMPOSIO_KEYS].map(([toolkit, key]) => [key, toolkit]),
+);
+const COMPOSIO_KEY_PREFIX = "composio-";
+const COMPOSIO_TOOLKIT_SLUG = /^[a-z0-9][a-z0-9_-]{0,119}$/;
+
+/** The stable server id used for a toolkit selected from Composio's live catalogue. */
+export function composioServerKey(toolkit: string): string {
+  return (
+    LEGACY_COMPOSIO_KEYS.get(toolkit) ?? `${COMPOSIO_KEY_PREFIX}${toolkit}`
+  );
+}
+
+/** Recover the remote toolkit from a persisted server id, without a schema-level metadata copy. */
+export function composioToolkitSlug(key: string): string | null {
+  const legacy = LEGACY_COMPOSIO_TOOLKITS.get(key);
+  if (legacy) return legacy;
+  if (!key.startsWith(COMPOSIO_KEY_PREFIX)) return null;
+  const slug = key.slice(COMPOSIO_KEY_PREFIX.length);
+  return COMPOSIO_TOOLKIT_SLUG.test(slug) ? slug : null;
+}
+
+/** Turn a toolkit Composio currently offers into the reviewed managed-execution shape OpenBot uses. */
+export function managedCatalogueEntry(toolkit: ManagedToolkit): CatalogueEntry {
+  return {
+    key: composioServerKey(toolkit.slug),
+    title: toolkit.name,
+    vendor: toolkit.name,
+    summary: toolkit.description,
+    // Descriptive boundary metadata. Tool discovery and execution go through ManagedConnector.
+    host: "https://backend.composio.dev",
+    path: "/",
+    auth: {
+      kind: "managed-user",
+      provider: "composio",
+      toolkit: toolkit.slug,
+    },
+    // A remote catalogue may add tools between deploys. Every managed tool therefore fails closed.
+    writeTools: Object.freeze([]),
+    docsUrl: `https://docs.composio.dev/toolkits/${encodeURIComponent(toolkit.slug)}`,
+    source: "composio",
+    logoUrl: toolkit.logoUrl,
+    categories: Object.freeze([...toolkit.categories]),
+    toolsCount: toolkit.toolsCount,
+  };
 }
 
 /**
@@ -378,6 +375,9 @@ export function classifyTool(
   // A server an administrator added by URL has no reviewed tool catalogue behind it, so nothing here
   // can say a tool of theirs only reads. Everything it offers is a write.
   if (!entry) return "write";
+  // Managed catalogues may add tools without a corresponding OpenBot deploy. Until effect metadata
+  // is reviewed here, every one is governed as a write rather than silently inheriting read access.
+  if (entry.auth.kind === "managed-user") return "write";
   if (!advertised) return "write";
   return entry.writeTools.includes(toolName) ? "write" : "read";
 }

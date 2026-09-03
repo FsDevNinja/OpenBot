@@ -14,6 +14,39 @@ import {
 export const AGENT_TRIGGER = "@";
 export const COMMAND_TRIGGER = "/";
 
+const AGENT_MENTION_PREFIX = "agent:";
+const CONNECTION_MENTION_PREFIX = "connection:";
+
+export type MentionKind = "agent" | "connection";
+
+/**
+ * `@` is shared by coworkers and connected accounts, so the chip value carries which one it is.
+ *
+ * The display text remains the human name (`@GitHub`); this value is editor metadata and never
+ * appears in the message. A prefix rather than a second trigger lets one menu search both sources.
+ */
+export function mentionValue(kind: MentionKind, id: string): string {
+  return `${kind === "agent" ? AGENT_MENTION_PREFIX : CONNECTION_MENTION_PREFIX}${id}`;
+}
+
+export function readMentionValue(value: string): {
+  kind: MentionKind;
+  id: string;
+} {
+  if (value.startsWith(CONNECTION_MENTION_PREFIX)) {
+    return {
+      kind: "connection",
+      id: value.slice(CONNECTION_MENTION_PREFIX.length),
+    };
+  }
+  if (value.startsWith(AGENT_MENTION_PREFIX)) {
+    return { kind: "agent", id: value.slice(AGENT_MENTION_PREFIX.length) };
+  }
+  // Chips created before connections shared this trigger stored the bare agent id. Keeping that
+  // interpretation makes an in-progress draft survive an HMR update instead of losing its addressee.
+  return { kind: "agent", id: value };
+}
+
 export type ComposerDraft = {
   /** Plain text, with chips flattened back to `@Agent` / `/command`. */
   text: string;
@@ -24,18 +57,30 @@ export type ComposerDraft = {
    * way in by `enforceSingleAgent` rather than validated here.
    */
   agentId: string | null;
+  /** Connected accounts explicitly selected for this turn, in the order they were mentioned. */
+  connectionIds: string[];
   /** Commands that survive into the sent message, in the order they were typed. */
   commandIds: string[];
   isEmpty: boolean;
 };
 
 export function toDraft(segments: Segment[]): ComposerDraft {
-  const agentChips = getChipsByTrigger(segments, AGENT_TRIGGER);
+  const mentions = getChipsByTrigger(segments, AGENT_TRIGGER).map((chip) =>
+    readMentionValue(chip.value),
+  );
+  const agentMentions = mentions.filter((mention) => mention.kind === "agent");
   const commandChips = getChipsByTrigger(segments, COMMAND_TRIGGER);
 
   return {
     text: segmentsToPlainText(segments).trim(),
-    agentId: agentChips.at(-1)?.value ?? null,
+    agentId: agentMentions.at(-1)?.id ?? null,
+    connectionIds: [
+      ...new Set(
+        mentions
+          .filter((mention) => mention.kind === "connection")
+          .map((mention) => mention.id),
+      ),
+    ],
     commandIds: commandChips.map((chip) => chip.value),
     isEmpty: isSegmentsEmpty(segments),
   };
@@ -43,14 +88,20 @@ export function toDraft(segments: Segment[]): ComposerDraft {
 
 /** Collapse multiple agent mentions to the most recent one while preserving identity on no-op. */
 export function enforceSingleAgent(segments: Segment[]): Segment[] {
-  const agentChipCount = getChipsByTrigger(segments, AGENT_TRIGGER).length;
+  const agentChipCount = getChipsByTrigger(segments, AGENT_TRIGGER).filter(
+    (chip) => readMentionValue(chip.value).kind === "agent",
+  ).length;
   if (agentChipCount <= 1) {
     return segments;
   }
 
   let remaining = agentChipCount;
   const kept = segments.filter((segment) => {
-    if (segment.type !== "chip" || segment.trigger !== AGENT_TRIGGER) {
+    if (
+      segment.type !== "chip" ||
+      segment.trigger !== AGENT_TRIGGER ||
+      readMentionValue(segment.value).kind !== "agent"
+    ) {
       return true;
     }
     remaining -= 1;

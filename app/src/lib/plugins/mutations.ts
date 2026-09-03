@@ -1,6 +1,6 @@
 import { mutationOptions, type QueryClient } from "@tanstack/react-query";
 import { client } from "@/lib/client";
-import { pluginKeys } from "./queries";
+import { type ConnectorCapabilityLevel, pluginKeys } from "./queries";
 
 /**
  * Writes against what a deployment has installed: MCP servers, skills, and which Bots carry them.
@@ -84,6 +84,56 @@ export function grantPlugin(variables: {
       agentId: variables.agentId,
     },
     fallback: "That Agent could not be changed.",
+  });
+}
+
+/**
+ * Grant a reviewed set in one HTTP request.
+ *
+ * GitHub alone advertises hundreds of tools. Sending one browser request per tool makes a category
+ * grant take minutes and leaves it dependent on the tab staying open. The server still writes and
+ * audits each individual grant; this only makes the network operation a batch.
+ */
+export function grantPlugins(variables: {
+  refs: string[];
+  agentIds: string[];
+}): Promise<unknown> {
+  return client("/api/plugins/grants/bulk", {
+    method: "POST",
+    body: {
+      kind: "mcp",
+      refs: variables.refs,
+      agentIds: variables.agentIds,
+    },
+    fallback: "Those tools could not be granted.",
+  });
+}
+
+/**
+ * Replace one Bot's exact grants for a connector with a capability-sized bundle.
+ *
+ * The server expands the level from its current tool catalogue and writes the exact refs in one
+ * transaction. A remote catalogue can change, so the browser never tries to be the authority on
+ * which names belong in a read, write or destructive set.
+ */
+export function setAgentConnectorCapabilityMutationOptions(
+  queryClient: QueryClient,
+) {
+  return mutationOptions({
+    mutationFn: setAgentConnectorCapability,
+    onSuccess: () => invalidatePlugins(queryClient),
+  });
+}
+
+export function setAgentConnectorCapability(variables: {
+  agentId: string;
+  serverId: string;
+  level: ConnectorCapabilityLevel;
+}): Promise<unknown> {
+  return client("/api/plugins/grants/capability", {
+    method: "PUT",
+    body: variables,
+    fallback: "That connector capability could not be saved.",
   });
 }
 
@@ -249,6 +299,22 @@ export function connectAccountMutationOptions(
         "authorizationUrl",
         { method: "POST", fallback: "That account could not be connected." },
       ),
+  });
+}
+
+/** Revoke the signed-in person's managed account connection. */
+export function disconnectAccountMutationOptions(queryClient: QueryClient) {
+  return mutationOptions({
+    mutationFn: async (input: { serverId: string; connectionId: string }) => {
+      await client(
+        `/api/plugins/servers/${encodeURIComponent(input.serverId)}/connections/${encodeURIComponent(input.connectionId)}`,
+        {
+          method: "DELETE",
+          fallback: "That account could not be disconnected.",
+        },
+      );
+    },
+    onSuccess: () => invalidatePlugins(queryClient),
   });
 }
 

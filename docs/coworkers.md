@@ -124,7 +124,11 @@ A coworker's role does not grant capabilities. Capabilities are governed separat
 
 - browser and file actions go through the computer gateway policy;
 - components are published deployment-wide and can be withheld per Bot;
-- MCP tools are granted per Bot by administrators;
+- administrators choose which connector catalogues exist in the workspace and set hard boundaries;
+- the coworker owner chooses none, read-only, read-and-write, or full connector access from the
+  coworker's **Capabilities** page; OpenBot persists the corresponding exact tool grants internally;
+- a connector still runs through the invoking person's own connected account, so a public coworker
+  never shares the creator's provider credentials;
 - personal skills can be attached only to Bots the author owns;
 - deployment skills are managed by administrators.
 

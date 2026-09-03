@@ -4,6 +4,7 @@ Start with the root [README](../README.md), then use these references:
 
 - [Architecture](architecture.md): services, ports, browser governance, computers, components, plugins, knowledge, and security boundaries.
 - [Configuration](configuration.md): environment variables and tenant package YAML.
+- [Composio SaaS boundary](composio-saas.md): one managed-connector project and key per customer deployment.
 - [Development](development.md): local setup, migrations, ports, and quality checks.
 - [Coworkers](coworkers.md): durable Bot profiles, custom avatars, channels, visibility, deletion, and external AG-UI registration.
 - [Local Codex provider](../agent-codex/README.md): persistent Codex threads through OpenBot's governed tool gateway, with an isolated ChatGPT OAuth connection for each OpenBot user.

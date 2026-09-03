@@ -5,6 +5,9 @@ export {
   type CommandKind,
   type CommandOption,
   type ComposerDraft,
+  type MentionKind,
+  mentionValue,
+  readMentionValue,
 } from "./draft";
 export {
   type QueueAction,
@@ -13,4 +16,8 @@ export {
   reduceQueue,
 } from "./queue";
 export { PLACEHOLDER_COMMANDS } from "./sources";
-export { type AgentOption, toAgentOptions } from "./triggers";
+export {
+  type AgentOption,
+  type ConnectionOption,
+  toAgentOptions,
+} from "./triggers";

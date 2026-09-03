@@ -8,6 +8,10 @@ import { agentListQueryOptions } from "@/lib/agents/queries";
 import { routeMessage } from "@/lib/channels/route";
 import { useStartChannel } from "@/lib/channels/start";
 import { appConfig } from "@/lib/generated/application-config";
+import {
+  connectionMentionInstructions,
+  useConnectionMentions,
+} from "@/lib/plugins/connection-mentions";
 
 export const Route = createFileRoute("/_authed/_app/")({
   component: RouteComponent,
@@ -18,6 +22,7 @@ function RouteComponent() {
   const explore = agents?.filter((a) => !a.mine && a.visibility === "public");
   const { start, pending } = useStartChannel();
   const [error, setError] = useState<string | null>(null);
+  const connectionMentions = useConnectionMentions();
 
   /** Default recipient when the composer draft has no mention. */
   const fallback = explore?.[0] ?? agents?.[0];
@@ -38,6 +43,7 @@ function RouteComponent() {
           <Composer
             agents={toAgentOptions(agents)}
             className="w-full max-w-2xl"
+            connections={connectionMentions}
             disabled={!fallback}
             onSubmit={async (draft) => {
               // A channel is pinned to one coworker for the life of its thread, so the coworker is
@@ -64,7 +70,14 @@ function RouteComponent() {
                   }
                 }
                 if (!agentId) return;
-                await start(agentId, draft.text);
+                await start(
+                  agentId,
+                  draft.text,
+                  connectionMentionInstructions(
+                    draft.connectionIds,
+                    connectionMentions,
+                  ),
+                );
               } catch (caught) {
                 setError(
                   caught instanceof Error

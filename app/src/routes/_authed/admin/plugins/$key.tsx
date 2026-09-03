@@ -1,5 +1,6 @@
 import {
   IconArrowUpRight,
+  IconChevronDown,
   IconChevronRight,
   IconExternalLink,
 } from "@tabler/icons-react";
@@ -14,7 +15,6 @@ import {
   PageShell,
 } from "@/components/layout/page-shell";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogBody,
@@ -35,59 +35,44 @@ import {
 } from "@/components/ui/item";
 import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
-import { useBotNames } from "@/lib/agents/bot-names";
-import { agentListQueryOptions } from "@/lib/agents/queries";
 import { storeMcpToken } from "@/lib/credentials/mutations";
 import {
   addCuratedServerMutationOptions,
   connectAccountMutationOptions,
-  grantPlugin,
-  invalidatePlugins,
   refreshPluginServerMutationOptions,
   registerOAuthClientMutationOptions,
   removePluginServerMutationOptions,
 } from "@/lib/plugins/mutations";
 import {
   connectionsQueryOptions,
+  type PluginTool,
   pluginsPageQueryOptions,
 } from "@/lib/plugins/queries";
 
 /**
- * One vendor: what it needs from this deployment, and which Bots hold its tools.
+ * One vendor: what the workspace makes available and what safety hints its catalogue exposes.
  *
  * Its own page because what a connector needs configured differs by vendor and does not fit on a
  * row. A token for one, an OAuth client and a redirect URI for another, an instance hostname for a
- * third, and then a grant per tool per Bot. The screen this replaced tried to hold all of that in a
- * list and grew a column per Bot, which is how a grant goes unread.
+ * third. Coworker capability choices deliberately live with the coworker instead of growing a
+ * column per Bot here.
  */
 export const Route = createFileRoute("/_authed/admin/plugins/$key")({
   component: RouteComponent,
 });
 
-/** Which of the four dialogs is open, or none. */
-type OpenDialog = "token" | "client" | "instance" | "grant" | null;
+/** Which connector-setup dialog is open, or none. */
+type OpenDialog = "token" | "client" | "instance" | null;
+type ToolOperation = PluginTool["operation"];
 
 /** The set with one member toggled, as a new set so React sees the change. */
-function toggled(
-  set: ReadonlySet<string>,
-  member: string,
-): ReadonlySet<string> {
+function toggled<Member>(
+  set: ReadonlySet<Member>,
+  member: Member,
+): ReadonlySet<Member> {
   const next = new Set(set);
   if (!next.delete(member)) next.add(member);
   return next;
-}
-
-/**
- * How widely a tool is granted, in words rather than a fraction.
- *
- * "0/3" needs decoding and reads as a score. The two ends are the ones worth recognising without
- * reading — nothing holds this, or everything does — so they are named, and the middle is the only
- * case that gets a number.
- */
-function grantSummary(held: number, total: number): string {
-  if (held === 0) return "No Bots";
-  if (held === total) return total === 1 ? "1 Bot" : "All Bots";
-  return `${held} of ${total} Bots`;
 }
 
 function RouteComponent() {
@@ -103,35 +88,18 @@ function RouteComponent() {
    * only ever returns the caller's, so this cannot become a list of who has connected what.
    */
   const connections = useQuery(connectionsQueryOptions());
-  const { data: agents } = useQuery(agentListQueryOptions());
   const youConnected = (connections.data?.connections ?? []).some(
     (row) => row.serverId === key,
   );
-  const nameFor = useBotNames();
 
   const [error, setError] = useState<string | null>(null);
   const [dialog, setDialog] = useState<OpenDialog>(null);
   const [token, setToken] = useState("");
   const [instanceHost, setInstanceHost] = useState("");
   const [client, setClient] = useState({ clientId: "", clientSecret: "" });
-  /** Who gets the tools, and which, while the grant dialog is open. */
-  const [selectedBots, setSelectedBots] = useState<ReadonlySet<string>>(
-    new Set(),
-  );
-  const [selectedRefs, setSelectedRefs] = useState<ReadonlySet<string>>(
-    new Set(),
-  );
-  /**
-   * How far through a batch of grants we are, or null when none is running.
-   *
-   * A count rather than a boolean because a bulk grant is honestly N writes: a Bot times twelve
-   * tools is twelve requests, and a button that says only "Granting…" for the length of them gives
-   * an administrator no way to tell a slow batch from a stuck one.
-   */
-  const [granting, setGranting] = useState<{
-    done: number;
-    total: number;
-  } | null>(null);
+  const [expandedPageOperations, setExpandedPageOperations] = useState<
+    ReadonlySet<ToolOperation>
+  >(new Set());
 
   /* Every write reports into one banner rather than each growing its own handler. */
   const report = { onError: (thrown: Error) => setError(thrown.message) };
@@ -166,10 +134,6 @@ function RouteComponent() {
   });
   const entry = plugins.data?.catalogue.find((item) => item.key === key);
   const server = plugins.data?.servers.find((item) => item.id === key);
-  const bots = (agents ?? []).map((agent: { id: string }) => ({
-    id: agent.id,
-    name: nameFor(agent.id),
-  }));
 
   /**
    * How this vendor is reached, from whichever record we have.
@@ -204,39 +168,6 @@ function RouteComponent() {
     }
   };
 
-  /*
-   * One write per grant, in selection order. The server records each grant as its own audit row, so
-   * a bulk action here is honestly N decisions; a refusal stops the rest and leaves the dialog open
-   * with the banner saying why.
-   *
-   * One refetch for the batch, at the end. Going through the grant mutation invalidated every plugin
-   * query after each write and awaited it, so a batch of twenty grants was twenty round trips
-   * interleaved with twenty refetches of a list nobody could see behind the dialog — most of the
-   * wait, for nothing anybody read. It is invalidated even when a grant is refused, because the ones
-   * before it landed and the screen behind is now stale about them.
-   */
-  const grantSelected = async () => {
-    setError(null);
-    const total = selectedBots.size * selectedRefs.size;
-    setGranting({ done: 0, total });
-    let done = 0;
-    try {
-      for (const agentId of selectedBots) {
-        for (const ref of selectedRefs) {
-          await grantPlugin({ agentId, kind: "mcp", ref });
-          done += 1;
-          setGranting({ done, total });
-        }
-      }
-      setDialog(null);
-    } catch (thrown) {
-      setError((thrown as Error).message);
-    } finally {
-      await invalidatePlugins(queryClient);
-      setGranting(null);
-    }
-  };
-
   /* Nothing rather than a placeholder, so no sentence asserts anything while the fetch is open. */
   if (plugins.isPending) {
     return <PageShell title="Plugin">{null}</PageShell>;
@@ -253,16 +184,43 @@ function RouteComponent() {
     );
   }
 
-  /* The grant dialog's two halves of the tool list, split by what a boundary would see. */
-  const reads = server?.tools.filter((tool) => tool.effect !== "write") ?? [];
-  const writes = server?.tools.filter((tool) => tool.effect === "write") ?? [];
-  const chosenWrites = writes.filter((tool) =>
-    selectedRefs.has(tool.ref),
-  ).length;
-  const chosenNames = bots
-    .filter((bot) => selectedBots.has(bot.id))
-    .map((bot) => bot.name);
-
+  /*
+   * The connector's operation hints explain what the workspace is enabling and support a stricter
+   * destructive-operation boundary. The runtime still treats every managed call as a coarse write.
+   */
+  const reads = server?.tools.filter((tool) => tool.operation === "read") ?? [];
+  const writes =
+    server?.tools.filter((tool) => tool.operation === "write") ?? [];
+  const deletes =
+    server?.tools.filter((tool) => tool.operation === "delete") ?? [];
+  const grantGroups = (
+    [
+      {
+        operation: "read",
+        title: "Read only",
+        description: "Fetches or searches without changing provider data.",
+        tools: reads,
+      },
+      {
+        operation: "write",
+        title: "Writes",
+        description: "Creates or changes provider data.",
+        tools: writes,
+      },
+      {
+        operation: "delete",
+        title: "Deletes or destructive",
+        description:
+          "Deletes, removes, revokes, cancels, or otherwise destroys data.",
+        tools: deletes,
+      },
+    ] satisfies {
+      operation: ToolOperation;
+      title: string;
+      description: string;
+      tools: PluginTool[];
+    }[]
+  ).filter((group) => group.tools.length > 0);
   return (
     <PageShell
       backButton={{ label: "Plugins", linkProps: { to: "/admin/plugins" } }}
@@ -288,16 +246,15 @@ function RouteComponent() {
            * them looking far more dangerous than the other.
            *
            * The description states the consequence in the present tense, in both directions, because
-           * switching this off deletes every grant on the vendor's tools and that is not recoverable
-           * by switching it back on.
+           * switching this off also removes the capabilities coworkers chose for this connector.
            */}
           <Item size="sm">
             <ItemContent>
               <ItemTitle>Enable for this deployment</ItemTitle>
               <ItemDescription>
                 {server
-                  ? "Bots may be granted its tools. Switching this off removes it and every grant on its tools."
-                  : "No Bot can reach this vendor. Switch it on to configure it and grant its tools."}
+                  ? "Available for coworker capabilities. Switching this off removes the connector and those capability grants."
+                  : "Not available to coworkers. Switch it on to configure it for this workspace."}
               </ItemDescription>
             </ItemContent>
             <ItemActions>
@@ -318,11 +275,13 @@ function RouteComponent() {
       {server ? (
         <PageSection
           description={
-            auth === "user-oauth"
-              ? "This vendor answers as whoever is asking. The deployment registers an OAuth client, and each person connects their own account, so a Bot only ever sees what that person can see."
-              : auth === "builtin"
-                ? "Built into this deployment. There is no vendor to reach and no credential to hold — a call runs as whoever asked."
-                : "What this deployment presents to the vendor. One credential, used for everybody."
+            auth === "managed-user"
+              ? "This vendor answers as whoever is asking. Composio provisions the OAuth app and holds each person's private connection; OpenBot keeps grants and audit state, not provider tokens."
+              : auth === "user-oauth"
+                ? "This vendor answers as whoever is asking. The deployment registers an OAuth client, and each person connects their own account, so a Bot only ever sees what that person can see."
+                : auth === "builtin"
+                  ? "Built into this deployment. There is no vendor to reach and no credential to hold — a call runs as whoever asked."
+                  : "What this deployment presents to the vendor. One credential, used for everybody."
           }
           title="Connection"
         >
@@ -383,6 +342,26 @@ function RouteComponent() {
                     {server?.hasCredential ? "Held" : "Not set"}
                   </span>
                   <IconChevronRight className="size-4 shrink-0 text-muted-foreground" />
+                </ItemActions>
+              </Item>
+            ) : null}
+
+            {auth === "managed-user" ? (
+              <Item size="sm">
+                <ItemContent>
+                  <ItemTitle>Connection service</ItemTitle>
+                  <ItemDescription>
+                    Composio owns the OAuth application, consent exchange, token
+                    storage, and refresh. OpenBot stores no provider
+                    credentials.
+                  </ItemDescription>
+                </ItemContent>
+                <ItemActions>
+                  <span className="text-muted-foreground text-xs">
+                    {plugins.data?.managedAuthConfigured
+                      ? "Configured"
+                      : "Needs COMPOSIO_API_KEY"}
+                  </span>
                 </ItemActions>
               </Item>
             ) : null}
@@ -449,8 +428,10 @@ function RouteComponent() {
              * dynamic client is the exception — there is no client to register in advance, so
              * Connect is shown right away and is itself what creates one.
              */}
-            {auth === "user-oauth" &&
-            (server?.hasCredential || server?.dynamicClient) ? (
+            {(auth === "managed-user" || auth === "user-oauth") &&
+            (auth === "managed-user" ||
+              server?.hasCredential ||
+              server?.dynamicClient) ? (
               <>
                 <Separator />
                 <Item size="sm">
@@ -458,7 +439,7 @@ function RouteComponent() {
                     <ItemTitle>Your account</ItemTitle>
                     <ItemDescription>
                       {youConnected
-                        ? `Connected, so a Bot granted these tools uses your ${title} as you. Everybody else connects their own.`
+                        ? `Connected. A coworker with this capability uses your ${title} as you when you run it. Everybody else connects their own.`
                         : "Connect your own account to try this connector. Setup is complete without it, and it reaches your documents only."}
                     </ItemDescription>
                   </ItemContent>
@@ -477,7 +458,11 @@ function RouteComponent() {
                     ) : (
                       /* The arrow says this leaves OpenBot for the vendor's consent page. It does. */
                       <Button
-                        disabled={connectSelf.isPending}
+                        disabled={
+                          connectSelf.isPending ||
+                          (auth === "managed-user" &&
+                            !plugins.data?.managedAuthConfigured)
+                        }
                         onClick={() => {
                           setError(null);
                           connectSelf.mutate(key);
@@ -592,96 +577,107 @@ function RouteComponent() {
            * an administrator came here to do.
            */
           action={
-            <div className="flex gap-1.5">
-              <Button
-                onClick={() => refresh.mutate(key)}
-                size="sm"
-                type="button"
-                variant="ghost"
-              >
-                Refresh tools
-              </Button>
-              {/*
-               * Outline where refresh is ghost: granting is the thing an administrator came to
-               * this section to do. Hidden rather than disabled with nothing to grant — a dialog
-               * over an empty list could only explain its own emptiness.
-               */}
-              {server.tools.length > 0 && bots.length > 0 ? (
-                <Button
-                  onClick={() => {
-                    setSelectedBots(new Set());
-                    setSelectedRefs(new Set());
-                    setDialog("grant");
-                  }}
-                  size="sm"
-                  type="button"
-                  variant="outline"
-                >
-                  Grant tools…
-                </Button>
-              ) : null}
-            </div>
+            <Button
+              disabled={
+                refresh.isPending ||
+                (auth === "managed-user" &&
+                  !plugins.data?.managedAuthConfigured)
+              }
+              onClick={() => refresh.mutate(key)}
+              size="sm"
+              type="button"
+              variant="ghost"
+            >
+              Refresh tools
+            </Button>
           }
-          description="A Bot is told about a tool only when it holds it. Every call is decided again when it happens, so removing a grant takes effect on the next one."
+          description="The workspace makes this catalogue available. Coworker owners choose an access level on the coworker's Capabilities page; workspace boundaries still decide every call."
           title="Tools"
         >
           {server.tools.length === 0 ? (
             <PageEmpty>
               {server.lastError ??
-                "No tools listed. Refresh to ask the vendor again."}
+                (auth === "managed-user" && !plugins.data?.managedAuthConfigured
+                  ? "Configure COMPOSIO_API_KEY to load this connector's tools."
+                  : "No tools listed. Refresh to ask the vendor again.")}
             </PageEmpty>
           ) : (
-            <PageRows>
-              {server.tools.map((tool, index) => (
-                <React.Fragment key={tool.ref}>
-                  {/* A real link with no children: children passed to `render` replace the row's own. */}
-                  <Item
-                    render={
-                      <Link
-                        params={{ key, tool: tool.name }}
-                        to="/admin/plugins/$key/tools/$tool"
-                      />
-                    }
-                    size="sm"
-                  >
-                    <ItemContent>
-                      <ItemTitle className="font-mono text-xs">
-                        {tool.name}
-                      </ItemTitle>
-                      <ItemDescription>{tool.description}</ItemDescription>
-                    </ItemContent>
-                    <ItemActions>
-                      {/*
-                       * How many Bots hold it, not which. The names were here as a chip each and
-                       * turned every row into a wrapping cluster of controls — twenty-four of them
-                       * across this list — with the tool's own name losing the fight for attention.
-                       * A count is what a reader scanning for "what is exposed, and how widely" is
-                       * actually asking, and the names are one click away where they can be switched
-                       * one at a time.
-                       */}
-                      <span className="text-muted-foreground text-xs">
-                        {grantSummary(tool.grantedTo.length, bots.length)}
+            <div className="space-y-5">
+              {grantGroups.map((group) => (
+                <div key={group.operation}>
+                  <div className="mb-2 flex items-start gap-2 rounded-md px-1 py-1">
+                    <button
+                      aria-expanded={expandedPageOperations.has(
+                        group.operation,
+                      )}
+                      className="flex min-w-0 flex-1 items-start gap-2 rounded text-left hover:bg-muted/50"
+                      onClick={() =>
+                        setExpandedPageOperations((previous) =>
+                          toggled(previous, group.operation),
+                        )
+                      }
+                      type="button"
+                    >
+                      {expandedPageOperations.has(group.operation) ? (
+                        <IconChevronDown className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+                      ) : (
+                        <IconChevronRight className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+                      )}
+                      <span className="min-w-0 flex-1">
+                        <span
+                          className={
+                            group.operation === "delete"
+                              ? "block font-medium text-destructive text-sm"
+                              : group.operation === "write"
+                                ? "block font-medium text-amber-600 text-sm dark:text-amber-500"
+                                : "block font-medium text-sm"
+                          }
+                        >
+                          {group.title}
+                        </span>
+                        <span className="block text-muted-foreground text-xs">
+                          {group.description}
+                        </span>
                       </span>
-                      {/*
-                       * The effect, not a description. It is what a boundary written about writes
-                       * evaluates, and an operator writing that rule has no other way to know.
-                       */}
-                      <span
-                        className={
-                          tool.effect === "write"
-                            ? "text-amber-600 text-xs dark:text-amber-500"
-                            : "text-muted-foreground text-xs"
-                        }
-                      >
-                        {tool.effect === "write" ? "changes things" : "reads"}
-                      </span>
-                      <IconChevronRight className="size-4 shrink-0 text-muted-foreground" />
-                    </ItemActions>
-                  </Item>
-                  {index !== server.tools.length - 1 && <Separator />}
-                </React.Fragment>
+                    </button>
+                    <span className="pt-1 text-muted-foreground text-xs">
+                      {group.tools.length}
+                    </span>
+                  </div>
+                  {expandedPageOperations.has(group.operation) ? (
+                    <PageRows>
+                      {group.tools.map((tool, index) => (
+                        <React.Fragment key={tool.ref}>
+                          {/* A real link with no children: children passed to `render` replace the row's own. */}
+                          <Item
+                            render={
+                              <Link
+                                params={{ key, tool: tool.name }}
+                                to="/admin/plugins/$key/tools/$tool"
+                              />
+                            }
+                            size="sm"
+                          >
+                            <ItemContent>
+                              <ItemTitle className="font-mono text-xs">
+                                {tool.name}
+                              </ItemTitle>
+                              <ItemDescription>
+                                {tool.description}
+                              </ItemDescription>
+                            </ItemContent>
+                            <ItemActions>
+                              <IconChevronRight className="size-4 shrink-0 text-muted-foreground" />
+                            </ItemActions>
+                          </Item>
+                          {index !== group.tools.length - 1 && <Separator />}
+                        </React.Fragment>
+                      ))}
+                    </PageRows>
+                  ) : null}
+                </div>
               ))}
-            </PageRows>
+            </div>
           )}
         </PageSection>
       ) : null}
@@ -696,7 +692,7 @@ function RouteComponent() {
        */}
       {server && server.withdrawn.length > 0 ? (
         <PageSection
-          description="This vendor no longer lists these, so no Bot is told about them and no model can call one. The grant is still recorded, and the tool would be offered again if the vendor started listing it. Revoke from the Bot's own page if that is not what you want."
+          description="This vendor no longer lists these, so no coworker is told about them and no model can call one. The exact grant is retained for continuity and would become active again if the vendor relisted the tool. Choosing a capability again on the coworker's page replaces that legacy set."
           title="Held but not offered"
         >
           <PageRows>
@@ -713,11 +709,6 @@ function RouteComponent() {
                       .
                     </ItemDescription>
                   </ItemContent>
-                  <ItemActions>
-                    <span className="text-muted-foreground text-xs">
-                      {grantSummary(held.grantedTo.length, bots.length)}
-                    </span>
-                  </ItemActions>
                 </Item>
                 {index !== server.withdrawn.length - 1 && <Separator />}
               </React.Fragment>
@@ -728,7 +719,7 @@ function RouteComponent() {
 
       <Dialog
         onOpenChange={(open) => setDialog(open ? dialog : null)}
-        open={dialog !== null && dialog !== "grant"}
+        open={dialog !== null}
       >
         <DialogContent>
           <DialogHeader>
@@ -826,202 +817,6 @@ function RouteComponent() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-
-      {/*
-       * Who first, then what: the decision arrives as "set this Bot up", not as a list of tools
-       * looking for an owner. Both groups get a select-all; the amber heading and the footer's
-       * "N of which change things" are what keep a bulk write grant a read decision, not a blind one.
-       */}
-      {server ? (
-        <Dialog
-          onOpenChange={(open) => setDialog(open ? dialog : null)}
-          open={dialog === "grant"}
-        >
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Grant tools</DialogTitle>
-              <DialogDescription>
-                Each grant is its own entry on the audit trail, and a granted
-                write is still checked against the boundaries on every call.
-              </DialogDescription>
-            </DialogHeader>
-            <DialogBody className="mt-4 space-y-5">
-              {/*
-               * Each set of tickboxes is a group named by its own heading, so a screen reader
-               * reaching a bare tool name is told which list it is in. "Changes things" is the whole
-               * warning on those, and it is a heading a sighted reader cannot miss and a listener
-               * would otherwise never hear.
-               *
-               * A `fieldset` because that is what a group of tickboxes is, named by the heading
-               * already on screen rather than by a `legend` duplicating it. `min-w-0` undoes the
-               * one thing a fieldset brings that a div did not: a min-content floor that a long
-               * tool name would push the dialog out to.
-               */}
-              <fieldset aria-labelledby="grant-to-heading" className="min-w-0">
-                <p className="mb-2 font-medium text-sm" id="grant-to-heading">
-                  To
-                </p>
-                <div className="space-y-2">
-                  {bots.map((bot) => (
-                    <div className="flex items-center gap-2" key={bot.id}>
-                      <Checkbox
-                        checked={selectedBots.has(bot.id)}
-                        id={`grant-bot-${bot.id}`}
-                        onCheckedChange={() =>
-                          setSelectedBots((previous) =>
-                            toggled(previous, bot.id),
-                          )
-                        }
-                      />
-                      <label
-                        className="text-sm"
-                        htmlFor={`grant-bot-${bot.id}`}
-                      >
-                        {bot.name}
-                      </label>
-                    </div>
-                  ))}
-                </div>
-              </fieldset>
-              <div className="max-h-64 space-y-5 overflow-y-auto">
-                {reads.length > 0 ? (
-                  <fieldset
-                    aria-labelledby="grant-reads-heading"
-                    className="min-w-0"
-                  >
-                    <div className="mb-1 flex items-center justify-between">
-                      <p
-                        className="font-medium text-sm"
-                        id="grant-reads-heading"
-                      >
-                        Reads
-                      </p>
-                      <Button
-                        onClick={() =>
-                          setSelectedRefs((previous) => {
-                            const next = new Set(previous);
-                            for (const tool of reads) next.add(tool.ref);
-                            return next;
-                          })
-                        }
-                        size="sm"
-                        type="button"
-                        variant="ghost"
-                      >
-                        Select all
-                      </Button>
-                    </div>
-                    <div className="space-y-2">
-                      {reads.map((tool) => (
-                        <div className="flex items-center gap-2" key={tool.ref}>
-                          <Checkbox
-                            checked={selectedRefs.has(tool.ref)}
-                            id={`grant-tool-${tool.ref}`}
-                            onCheckedChange={() =>
-                              setSelectedRefs((previous) =>
-                                toggled(previous, tool.ref),
-                              )
-                            }
-                          />
-                          <label
-                            className="font-mono text-xs"
-                            htmlFor={`grant-tool-${tool.ref}`}
-                          >
-                            {tool.name}
-                          </label>
-                        </div>
-                      ))}
-                    </div>
-                  </fieldset>
-                ) : null}
-                {writes.length > 0 ? (
-                  <fieldset
-                    aria-labelledby="grant-writes-heading"
-                    className="min-w-0"
-                  >
-                    <div className="mb-1 flex items-center justify-between">
-                      <p
-                        className="font-medium text-amber-600 text-sm dark:text-amber-500"
-                        id="grant-writes-heading"
-                      >
-                        Changes things
-                      </p>
-                      <Button
-                        onClick={() =>
-                          setSelectedRefs((previous) => {
-                            const next = new Set(previous);
-                            for (const tool of writes) next.add(tool.ref);
-                            return next;
-                          })
-                        }
-                        size="sm"
-                        type="button"
-                        variant="ghost"
-                      >
-                        Select all
-                      </Button>
-                    </div>
-                    <div className="space-y-2">
-                      {writes.map((tool) => (
-                        <div className="flex items-center gap-2" key={tool.ref}>
-                          <Checkbox
-                            checked={selectedRefs.has(tool.ref)}
-                            id={`grant-tool-${tool.ref}`}
-                            onCheckedChange={() =>
-                              setSelectedRefs((previous) =>
-                                toggled(previous, tool.ref),
-                              )
-                            }
-                          />
-                          <label
-                            className="font-mono text-xs"
-                            htmlFor={`grant-tool-${tool.ref}`}
-                          >
-                            {tool.name}
-                          </label>
-                        </div>
-                      ))}
-                    </div>
-                  </fieldset>
-                ) : null}
-              </div>
-            </DialogBody>
-            <DialogFooter className="mt-4 items-center">
-              {/* What is about to happen, in one sentence, before it does. */}
-              {selectedRefs.size > 0 && chosenNames.length > 0 ? (
-                <p className="flex-1 text-muted-foreground text-xs">
-                  {`Grant ${selectedRefs.size} ${
-                    selectedRefs.size === 1 ? "tool" : "tools"
-                  }${
-                    chosenWrites > 0
-                      ? `, ${chosenWrites} of which ${
-                          chosenWrites === 1 ? "changes" : "change"
-                        } things,`
-                      : ""
-                  } to ${chosenNames.join(", ")}.`}
-                </p>
-              ) : null}
-              <Button onClick={() => setDialog(null)} size="sm" variant="ghost">
-                Cancel
-              </Button>
-              <Button
-                disabled={
-                  granting !== null ||
-                  selectedBots.size === 0 ||
-                  selectedRefs.size === 0
-                }
-                onClick={() => void grantSelected()}
-                size="sm"
-              >
-                {/* The one in flight, not the ones finished: a count that starts at zero of twelve reads as nothing happening. */}
-                {granting
-                  ? `Granting ${Math.min(granting.done + 1, granting.total)} of ${granting.total}…`
-                  : "Grant"}
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
-      ) : null}
     </PageShell>
   );
 }

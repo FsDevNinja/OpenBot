@@ -1,19 +1,17 @@
-import {
-  IconBrandGoogleDrive,
-  IconBrandNotion,
-  IconChevronRight,
-  IconPlug,
-} from "@tabler/icons-react";
-import { useQuery } from "@tanstack/react-query";
+import { IconChevronRight, IconLoader2, IconSearch } from "@tabler/icons-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import * as React from "react";
+import { useState } from "react";
 import {
   PageEmpty,
   PageRows,
   PageSection,
   PageShell,
 } from "@/components/layout/page-shell";
-import { RowMark } from "@/components/layout/row-mark";
+import { PluginMark } from "@/components/plugin-mark";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import {
   Item,
   ItemActions,
@@ -22,6 +20,7 @@ import {
   ItemTitle,
 } from "@/components/ui/item";
 import { Separator } from "@/components/ui/separator";
+import { addCuratedServerMutationOptions } from "@/lib/plugins/mutations";
 import {
   type CatalogueItem,
   connectionsQueryOptions,
@@ -35,30 +34,26 @@ import {
  * This screen used to be three tabs: a catalogue of what could be added, a second tab for what had
  * been, and skills. Answering one question about one vendor — is Drive available, and what can it
  * do — meant visiting two of them, and the third was a different kind of thing altogether. Two
- * lists say the same thing in one read: what is connected, and what else there is.
+ * lists say the same thing in one read: what is enabled, and what else there is.
  *
- * Every row goes to that vendor's own page, because what a connector needs configured is not the
- * same from one vendor to the next. A token, an OAuth client, an instance hostname, and a grant per
- * tool per Bot do not fit on a row, and the previous screen's attempt to fit them made a page that
- * scrolled sideways.
+ * Enabled rows go to that vendor's own page, because connection and grant details do not fit here.
+ * Available rows enable directly: Composio owns the OAuth application, so choosing a workspace
+ * integration no longer requires an administrator to configure vendor credentials first.
  */
 export const Route = createFileRoute("/_authed/admin/plugins/")({
   component: RouteComponent,
 });
 
-/**
- * A vendor's own mark where there is one, and a plug where there is not.
- *
- * The fallback covers a server an administrator added by URL, which has no catalogue entry and so no
- * mark of its own — and it would cover a catalogue vendor Tabler ships no brand for. Only Drive is in
- * the catalogue today, and Tabler has it.
- */
-const MARKS: Record<string, React.ComponentType<{ className?: string }>> = {
-  "google-drive": IconBrandGoogleDrive,
-  notion: IconBrandNotion,
-};
-
-const markFor = (key: string) => MARKS[key] ?? IconPlug;
+function catalogueMeta(entry: CatalogueItem): string | null {
+  const parts = [
+    entry.toolsCount === null
+      ? null
+      : `${entry.toolsCount} ${entry.toolsCount === 1 ? "tool" : "tools"}`,
+    entry.categories[0] ?? null,
+  ];
+  const value = parts.filter(Boolean).join(" · ");
+  return value || null;
+}
 
 /**
  * What a connected row says on the right.
@@ -83,7 +78,8 @@ function summaryFor(
   auth: CatalogueItem["auth"] | undefined,
   youConnected: boolean,
 ): string {
-  if (auth === "user-oauth" && !youConnected) return "Not connected";
+  if ((auth === "user-oauth" || auth === "managed-user") && !youConnected)
+    return "Your account not connected";
   if (server.tools.length === 0) return "No tools yet";
 
   const bots = new Set(server.tools.flatMap((tool) => tool.grantedTo)).size;
@@ -93,26 +89,49 @@ function summaryFor(
 }
 
 function RouteComponent() {
+  const queryClient = useQueryClient();
   const plugins = useQuery(pluginsPageQueryOptions());
   const connections = useQuery(connectionsQueryOptions());
+  const [search, setSearch] = useState("");
+  const [visibleCount, setVisibleCount] = useState(50);
+  const [enableError, setEnableError] = useState<string | null>(null);
+  const enable = useMutation({
+    ...addCuratedServerMutationOptions(queryClient),
+    onError: (error: Error) => setEnableError(error.message),
+  });
 
   const connected = new Set(
     (connections.data?.connections ?? []).map((row) => row.serverId),
   );
   const added = new Set((plugins.data?.servers ?? []).map((s) => s.id));
-  const explore = (plugins.data?.catalogue ?? []).filter(
+  const available = (plugins.data?.catalogue ?? []).filter(
     (entry) => !added.has(entry.key),
   );
+  const builtins = available.filter((entry) => entry.source === "openbot");
+  const composio = available.filter((entry) => entry.source === "composio");
+  const normalizedSearch = search.trim().toLocaleLowerCase();
+  const filteredComposio = composio.filter((entry) =>
+    [entry.title, entry.summary, entry.vendor, ...entry.categories]
+      .join(" ")
+      .toLocaleLowerCase()
+      .includes(normalizedSearch),
+  );
+  const visibleComposio = filteredComposio.slice(0, visibleCount);
   /** Keyed by catalogue key, which is also the server id, so a row can ask how it is reached. */
-  const authByKey = new Map(
-    (plugins.data?.catalogue ?? []).map((entry) => [entry.key, entry.auth]),
+  const catalogueByKey = new Map(
+    (plugins.data?.catalogue ?? []).map((entry) => [entry.key, entry]),
   );
 
   return (
     <PageShell
-      description="What this deployment can reach, and which Bots may reach it. Adding a plugin is account-wide; which Bots hold its tools is decided on its own page."
+      description="Choose which integrations this workspace may use. Each person connects their own account separately, and each Bot still needs an explicit tool grant."
       title="Plugins"
     >
+      {enableError ? (
+        <p className="mt-6 text-destructive text-sm" role="alert">
+          {enableError}
+        </p>
+      ) : null}
       {/* Pending, error, empty, rows — pending first, so no sentence asserts anything mid-fetch. */}
       {plugins.isPending ? null : plugins.error ? (
         <p className="mt-12 text-destructive text-sm" role="alert">
@@ -121,17 +140,17 @@ function RouteComponent() {
       ) : (
         <>
           <PageSection
-            description="Added for the whole deployment. Open one to set what it needs and which Bots hold its tools."
-            title="Connected"
+            description="Allowed for this workspace. Open one to connect your own account, refresh its tools, and decide which Bots may use them."
+            title="Enabled for workspace"
           >
             {plugins.data?.servers.length === 0 ? (
               <PageEmpty>
-                Nothing connected yet. Everything available is below.
+                Nothing enabled yet. Choose an integration below.
               </PageEmpty>
             ) : (
               <PageRows>
                 {plugins.data?.servers.map((server, index) => {
-                  const Mark = markFor(server.id);
+                  const entry = catalogueByKey.get(server.id);
                   return (
                     <React.Fragment key={server.id}>
                       {/*
@@ -149,9 +168,10 @@ function RouteComponent() {
                         }
                         size="sm"
                       >
-                        <RowMark>
-                          <Mark className="size-4" />
-                        </RowMark>
+                        <PluginMark
+                          logoUrl={entry?.logoUrl}
+                          pluginKey={server.id}
+                        />
                         <ItemContent>
                           <ItemTitle>{server.title}</ItemTitle>
                           {/*
@@ -164,14 +184,16 @@ function RouteComponent() {
                               server.lastError ? "text-destructive" : undefined
                             }
                           >
-                            {server.lastError ?? server.summary}
+                            {server.lastError ??
+                              entry?.summary ??
+                              server.summary}
                           </ItemDescription>
                         </ItemContent>
                         <ItemActions>
                           <span className="text-muted-foreground text-xs">
                             {summaryFor(
                               server,
-                              authByKey.get(server.id),
+                              entry?.auth,
                               connected.has(server.id),
                             )}
                           </span>
@@ -189,48 +211,136 @@ function RouteComponent() {
           </PageSection>
 
           <PageSection
-            description="Reviewed, first-party servers this build will talk to. Open one to add it."
-            title="Explore plugins"
+            description="Live from this workspace's Composio project. These choices use OAuth applications and tokens managed by Composio; OpenBot stores grants and audit history, not provider credentials."
+            title="Available through Composio"
           >
-            {explore.length === 0 ? (
-              <PageEmpty>Everything in the catalogue is connected.</PageEmpty>
+            <div className="relative mt-4">
+              <IconSearch className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                aria-label="Search Composio integrations"
+                className="pl-8"
+                onChange={(event) => {
+                  setSearch(event.target.value);
+                  setVisibleCount(50);
+                }}
+                placeholder="Search integrations"
+                type="search"
+                value={search}
+              />
+            </div>
+            {plugins.data?.catalogueError ? (
+              <p className="mt-3 text-destructive text-sm" role="alert">
+                {plugins.data.catalogueError}
+              </p>
+            ) : null}
+            {filteredComposio.length === 0 ? (
+              <PageEmpty>
+                {normalizedSearch
+                  ? "No Composio integrations match that search."
+                  : "Every available Composio integration is already enabled."}
+              </PageEmpty>
             ) : (
               <PageRows>
-                {explore.map((entry: CatalogueItem, index) => {
-                  const Mark = markFor(entry.key);
+                {visibleComposio.map((entry: CatalogueItem, index) => {
+                  const isEnabling =
+                    enable.isPending && enable.variables?.key === entry.key;
                   return (
                     <React.Fragment key={entry.key}>
-                      <Item
-                        data-testid={`plugin-${entry.key}`}
-                        render={
-                          <Link
-                            params={{ key: entry.key }}
-                            to="/admin/plugins/$key"
-                          />
-                        }
-                        size="sm"
-                      >
-                        <RowMark>
-                          <Mark className="size-4" />
-                        </RowMark>
+                      <Item data-testid={`plugin-${entry.key}`} size="sm">
+                        <PluginMark
+                          logoUrl={entry.logoUrl}
+                          pluginKey={entry.key}
+                        />
                         <ItemContent>
                           <ItemTitle>{entry.title}</ItemTitle>
                           <ItemDescription>{entry.summary}</ItemDescription>
                         </ItemContent>
                         <ItemActions>
-                          <span className="text-muted-foreground text-xs">
-                            Not added
-                          </span>
-                          <IconChevronRight className="size-4 shrink-0 text-muted-foreground" />
+                          {catalogueMeta(entry) ? (
+                            <span className="hidden text-muted-foreground text-xs sm:inline">
+                              {catalogueMeta(entry)}
+                            </span>
+                          ) : null}
+                          <Button
+                            disabled={
+                              enable.isPending ||
+                              !plugins.data?.managedAuthConfigured
+                            }
+                            onClick={() => {
+                              setEnableError(null);
+                              enable.mutate({ key: entry.key });
+                            }}
+                            size="sm"
+                            type="button"
+                            variant="outline"
+                          >
+                            {isEnabling ? (
+                              <IconLoader2 className="animate-spin" />
+                            ) : null}
+                            {isEnabling ? "Enabling" : "Enable"}
+                          </Button>
                         </ItemActions>
                       </Item>
-                      {index !== explore.length - 1 && <Separator />}
+                      {index !== visibleComposio.length - 1 && <Separator />}
                     </React.Fragment>
                   );
                 })}
               </PageRows>
             )}
+            {visibleComposio.length < filteredComposio.length ? (
+              <div className="mt-3 flex justify-center">
+                <Button
+                  onClick={() => setVisibleCount((count) => count + 50)}
+                  type="button"
+                  variant="ghost"
+                >
+                  Show 50 more
+                </Button>
+              </div>
+            ) : null}
           </PageSection>
+
+          {builtins.length > 0 ? (
+            <PageSection
+              description="Capabilities maintained inside OpenBot. They need no external account or OAuth application."
+              title="OpenBot capabilities"
+            >
+              <PageRows>
+                {builtins.map((entry, index) => (
+                  <React.Fragment key={entry.key}>
+                    <Item data-testid={`plugin-${entry.key}`} size="sm">
+                      <PluginMark
+                        logoUrl={entry.logoUrl}
+                        pluginKey={entry.key}
+                      />
+                      <ItemContent>
+                        <ItemTitle>{entry.title}</ItemTitle>
+                        <ItemDescription>{entry.summary}</ItemDescription>
+                      </ItemContent>
+                      <ItemActions>
+                        <Button
+                          disabled={enable.isPending}
+                          onClick={() => {
+                            setEnableError(null);
+                            enable.mutate({ key: entry.key });
+                          }}
+                          size="sm"
+                          type="button"
+                          variant="outline"
+                        >
+                          {enable.isPending &&
+                          enable.variables?.key === entry.key
+                            ? "Enabling"
+                            : "Enable"}
+                        </Button>
+                      </ItemActions>
+                    </Item>
+                    {index !== builtins.length - 1 && <Separator />}
+                  </React.Fragment>
+                ))}
+              </PageRows>
+            </PageSection>
+          ) : null}
         </>
       )}
     </PageShell>

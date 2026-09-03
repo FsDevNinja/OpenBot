@@ -44,6 +44,8 @@ export type QueuedMessage = {
    * eventually runs rather than being silently dropped on the way through the queue.
    */
   commandIds: string[];
+  /** Connected accounts selected in this message, retained until the queued turn actually runs. */
+  connectionIds: string[];
 };
 
 export type QueueAction =
@@ -103,6 +105,7 @@ export function reduceQueue(
               id: action.id,
               text: action.draft.text,
               commandIds: [...action.draft.commandIds],
+              connectionIds: [...action.draft.connectionIds],
             },
           ]),
         };
@@ -114,6 +117,7 @@ export function reduceQueue(
             id: action.id,
             text: action.draft.text,
             commandIds: [...action.draft.commandIds],
+            connectionIds: [...action.draft.connectionIds],
           },
         ],
         run: null,
@@ -159,6 +163,10 @@ function joinQueued(queue: readonly QueuedMessage[]): ComposerDraft {
     // The same skill queued twice is still one instruction. Sending it twice would put the same
     // paragraph in front of the Bot two times and say nothing new by doing it.
     commandIds: [...new Set(queue.flatMap((message) => message.commandIds))],
+    // A connection selected in any parked correction applies to the combined follow-up turn.
+    connectionIds: [
+      ...new Set(queue.flatMap((message) => message.connectionIds)),
+    ],
     isEmpty: false,
   };
 }

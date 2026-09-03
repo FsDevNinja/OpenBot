@@ -1,9 +1,4 @@
 import type { Message } from "@ag-ui/core";
-import {
-  UseAgentUpdate,
-  useAgent,
-  useOpenBotRuntime,
-} from "@/lib/runtime/provider";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toAgentOptions } from "@/components/channels/composer";
@@ -13,16 +8,6 @@ import {
   takeFirstMessage,
   transcriptMessages,
 } from "@/components/channels/transcript-messages";
-import { agentListQueryOptions } from "@/lib/agents/queries";
-import {
-  recordChannelActivityMutationOptions,
-  setChannelBusy,
-} from "@/lib/channels/mutations";
-import {
-  type AgentChannel,
-  type ChannelSummary,
-  channelKeys,
-} from "@/lib/channels/queries";
 import { useActiveBot } from "@/lib/agent/active-bot";
 import { ConversationProvider } from "@/lib/agent/conversation";
 import { afterMs, joinWithin } from "@/lib/agent/join-thread";
@@ -33,7 +18,26 @@ import {
   readThreadMessages,
   restoreThreadMessages,
 } from "@/lib/agent/thread-messages";
+import { agentListQueryOptions } from "@/lib/agents/queries";
+import {
+  recordChannelActivityMutationOptions,
+  setChannelBusy,
+} from "@/lib/channels/mutations";
+import {
+  type AgentChannel,
+  type ChannelSummary,
+  channelKeys,
+} from "@/lib/channels/queries";
+import {
+  connectionMentionInstructions,
+  useConnectionMentions,
+} from "@/lib/plugins/connection-mentions";
 import { useSkillCommands } from "@/lib/plugins/skill-commands";
+import {
+  UseAgentUpdate,
+  useAgent,
+  useOpenBotRuntime,
+} from "@/lib/runtime/provider";
 import { queryClient } from "@/query-client";
 import { newId } from "../../lib/new-id";
 
@@ -81,14 +85,13 @@ export function ChannelChat({
    * First-message seed from the compose screen. It is taken once per mount and retained until the
    * agent has its own messages because joining a fresh thread can temporarily empty the agent.
    */
+  const [firstMessage] = useState(() => takeFirstMessage(channel.id));
   const [seed] = useState<Message | null>(() => {
-    const pending = takeFirstMessage(channel.id);
-    return pending ? seedMessage(pending, newId()) : null;
+    return firstMessage ? seedMessage(firstMessage.text, newId()) : null;
   });
 
   /** Cleared by the send-on-mount effect without restarting it. */
-  const seedRef = useRef(seed);
-  seedRef.current = seed;
+  const seedRef = useRef(firstMessage);
 
   /** Promise gate for ordering the first message after the thread join when possible. */
   const openJoinGate = useRef<() => void>(() => {});
@@ -270,6 +273,7 @@ export function ChannelChat({
   useActiveBot(runtimeAgentId);
 
   const skillCommands = useSkillCommands(runtimeAgentId);
+  const connectionMentions = useConnectionMentions();
 
   // Run failures arrive as events and are reported only for turns started in this mount.
   const [runError, setRunError] = useState<string | null>(null);
@@ -469,9 +473,7 @@ export function ChannelChat({
     if (!pending) return;
     seedRef.current = null;
 
-    void sayRef.current(
-      typeof pending.content === "string" ? pending.content : "",
-    );
+    void sayRef.current(pending.text, pending.instructions);
 
     // Keep `seed` in state; transcriptMessages gives it up once the agent holds a user turn.
   }, []);
@@ -480,6 +482,7 @@ export function ChannelChat({
     <ConversationProvider ask={askFromComponent}>
       <ConversationView
         agents={toAgentOptions(agentProfiles, channel.agentIds)}
+        connections={connectionMentions}
         /*
          * THE TURN, not the run. `say` waits for the runtime agent and the join before a run starts,
          * and `agent.isRunning` alone leaves that gap unmarked — which is the one moment the
@@ -531,7 +534,13 @@ export function ChannelChat({
               Boolean(instruction),
             );
 
-          await say(draft.text, skillInstructions);
+          await say(draft.text, [
+            ...skillInstructions,
+            ...connectionMentionInstructions(
+              draft.connectionIds,
+              connectionMentions,
+            ),
+          ]);
         }}
         /**
          * Stop through the core so the abort signal reaches frontend tools; `say` repairs any

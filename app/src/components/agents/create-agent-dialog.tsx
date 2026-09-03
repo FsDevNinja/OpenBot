@@ -3,6 +3,7 @@ import { Link } from "@tanstack/react-router";
 import { AnimatePresence, MotionConfig, motion } from "motion/react";
 import { useState } from "react";
 import useMeasure from "react-use-measure";
+import { PluginMark } from "@/components/plugin-mark";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -18,6 +19,13 @@ import {
 } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import {
+  Item,
+  ItemActions,
+  ItemContent,
+  ItemDescription,
+  ItemTitle,
+} from "@/components/ui/item";
+import {
   Questionnaire,
   QuestionnaireChoice,
   QuestionnaireChoiceDescription,
@@ -26,6 +34,13 @@ import {
   QuestionnaireItem,
   QuestionnaireTitle,
 } from "@/components/ui/questionnaire";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import {
   type AgentFormValues,
@@ -39,6 +54,17 @@ import {
   type ConnectionVerdict,
   testAgentConnection,
 } from "@/lib/agents/queries";
+import { capabilityDescription } from "@/lib/plugins/capabilities";
+import {
+  invalidatePlugins,
+  setAgentConnectorCapability,
+} from "@/lib/plugins/mutations";
+import {
+  type CatalogueItem,
+  type ConnectorCapabilityLevel,
+  type PluginServer,
+  pluginsPageQueryOptions,
+} from "@/lib/plugins/queries";
 import { queryClient } from "@/query-client";
 
 /**
@@ -70,7 +96,7 @@ export function CreateAgentDialog({
 }
 
 /** The steps, in the order they are asked. The name is the questionnaire item's name. */
-const STEPS = ["identity", "visibility", "provider"] as const;
+const STEPS = ["identity", "visibility", "provider", "capabilities"] as const;
 type StepName = (typeof STEPS)[number];
 
 /** The two ways a coworker can be seen. */
@@ -132,6 +158,7 @@ function CreateAgentWizard({
 }) {
   const createAgent = useMutation(createAgentMutationOptions(queryClient));
   const { data: capabilities } = useQuery(agentCapabilitiesQueryOptions());
+  const plugins = useQuery(pluginsPageQueryOptions());
 
   const [step, setStep] = useState(0);
   const [direction, setDirection] = useState(1);
@@ -140,6 +167,13 @@ function CreateAgentWizard({
   const [values, setValues] = useState<AgentFormValues>(emptyAgentForm);
   /** Deliberately unanswered: provider choice is separate from the agent's identity. */
   const [provider, setProvider] = useState<ProviderChoice | null>(null);
+  const [connectorLevels, setConnectorLevels] = useState<
+    Readonly<Record<string, ConnectorCapabilityLevel>>
+  >({});
+  /** Set only if creation succeeded and capability setup needs retrying. */
+  const [createdAgentId, setCreatedAgentId] = useState<string | null>(null);
+  const [setupError, setSetupError] = useState<string | null>(null);
+  const [finishing, setFinishing] = useState(false);
 
   const [connection, setConnection] = useState<ConnectionVerdict | null>(null);
   const [testing, setTesting] = useState(false);
@@ -213,13 +247,47 @@ function CreateAgentWizard({
       go(step + 1);
       return;
     }
-    const agent = await createAgent.mutateAsync(
-      agentInputFrom(
-        values,
-        provider && provider !== "external" ? provider : undefined,
-      ),
-    );
-    onCreated(agent.id);
+    setSetupError(null);
+    setFinishing(true);
+    let agentId = createdAgentId;
+    try {
+      if (!agentId) {
+        const agent = await createAgent.mutateAsync(
+          agentInputFrom(
+            values,
+            provider && provider !== "external" ? provider : undefined,
+          ),
+        );
+        agentId = agent.id;
+        setCreatedAgentId(agent.id);
+      }
+      if (!agentId) throw new Error("The coworker did not return an id.");
+      const targetAgentId = agentId;
+
+      await Promise.all(
+        Object.entries(connectorLevels)
+          .filter(([, level]) => level !== "none")
+          .map(([serverId, level]) =>
+            setAgentConnectorCapability({
+              agentId: targetAgentId,
+              serverId,
+              level,
+            }),
+          ),
+      );
+      await invalidatePlugins(queryClient);
+      onCreated(targetAgentId);
+    } catch (failure) {
+      if (agentId) {
+        setSetupError(
+          failure instanceof Error
+            ? `The coworker was created, but its capabilities could not be saved: ${failure.message}`
+            : "The coworker was created, but its capabilities could not be saved.",
+        );
+      }
+    } finally {
+      setFinishing(false);
+    }
   };
 
   return (
@@ -290,7 +358,7 @@ function CreateAgentWizard({
                       />
                     ) : STEPS[step] === "visibility" ? (
                       <VisibilityStep set={set} values={values} />
-                    ) : (
+                    ) : STEPS[step] === "provider" ? (
                       <ProviderStep
                         providers={capabilities?.providers ?? []}
                         endpointError={endpointError}
@@ -310,6 +378,24 @@ function CreateAgentWizard({
                         testing={testing}
                         values={values}
                       />
+                    ) : (
+                      <CapabilitiesStep
+                        catalogue={plugins.data?.catalogue ?? []}
+                        levels={connectorLevels}
+                        onLevel={(serverId, level) =>
+                          setConnectorLevels((current) => ({
+                            ...current,
+                            [serverId]: level,
+                          }))
+                        }
+                        servers={(plugins.data?.servers ?? []).filter(
+                          (server) =>
+                            server.tools.length > 0 &&
+                            (server.auth === "managed-user" ||
+                              server.auth === "user-oauth" ||
+                              server.auth === "builtin"),
+                        )}
+                      />
                     )}
                   </motion.div>
                 </AnimatePresence>
@@ -322,9 +408,15 @@ function CreateAgentWizard({
               {createAgent.error.message}
             </p>
           ) : null}
+          {setupError ? (
+            <p className="mt-4 text-sm text-destructive" role="alert">
+              {setupError}
+            </p>
+          ) : null}
 
           <div className="mt-6 flex justify-between gap-2">
             <Button
+              disabled={createdAgentId !== null}
               onClick={step === 0 ? onClose : () => go(step - 1)}
               type="button"
               variant="outline"
@@ -332,14 +424,18 @@ function CreateAgentWizard({
               {step === 0 ? "Cancel" : "Back"}
             </Button>
             <Button
-              disabled={createAgent.isPending}
+              disabled={createAgent.isPending || finishing}
               onClick={() => void advance()}
               type="button"
             >
               {last
-                ? createAgent.isPending
-                  ? "Creating…"
-                  : "Create team member"
+                ? createAgent.isPending || finishing
+                  ? createdAgentId
+                    ? "Saving capabilities…"
+                    : "Creating…"
+                  : createdAgentId
+                    ? "Retry capabilities"
+                    : "Create team member"
                 : "Continue"}
             </Button>
           </div>
@@ -616,6 +712,100 @@ function ProviderStep({
           </Field>
         </FieldGroup>
       ) : null}
+    </StepItem>
+  );
+}
+
+/**
+ * Capability-sized connector choices, after identity and provider.
+ *
+ * The workspace has already decided which connectors exist. This step decides only what the new
+ * coworker needs, and the server expands each level into exact tool grants after creation.
+ */
+function CapabilitiesStep({
+  servers,
+  catalogue,
+  levels,
+  onLevel,
+}: {
+  servers: PluginServer[];
+  catalogue: CatalogueItem[];
+  levels: Readonly<Record<string, ConnectorCapabilityLevel>>;
+  onLevel: (serverId: string, level: ConnectorCapabilityLevel) => void;
+}) {
+  const entries = new Map(catalogue.map((entry) => [entry.key, entry]));
+
+  return (
+    <StepItem name="capabilities">
+      <QuestionnaireTitle>What can this coworker use?</QuestionnaireTitle>
+      <QuestionnaireDescription>
+        Choose broad capabilities, not individual provider tools. Workspace
+        boundaries still decide every call, and connected accounts stay personal
+        to whoever is asking.
+      </QuestionnaireDescription>
+      {servers.length === 0 ? (
+        <p className="text-sm text-muted-foreground">
+          This workspace has not enabled any owner-configurable connectors. You
+          can add capabilities later from the coworker&rsquo;s page.
+        </p>
+      ) : (
+        <div className="flex flex-col gap-2">
+          {servers.map((server) => {
+            const level = levels[server.id] ?? "none";
+            const hasRead = server.tools.some(
+              (tool) => tool.operation === "read",
+            );
+            const hasNonDestructive = server.tools.some(
+              (tool) => tool.operation !== "delete",
+            );
+            return (
+              <Item key={server.id} variant="muted">
+                <PluginMark
+                  logoUrl={entries.get(server.id)?.logoUrl}
+                  pluginKey={server.id}
+                />
+                <ItemContent>
+                  <ItemTitle>{server.title}</ItemTitle>
+                  <ItemDescription className="line-clamp-none">
+                    {capabilityDescription(server, level)}
+                  </ItemDescription>
+                </ItemContent>
+                <ItemActions>
+                  <Select
+                    items={{
+                      none: "No access",
+                      read: "Read only",
+                      write: "Read and write",
+                      delete: "Full access",
+                    }}
+                    onValueChange={(next) =>
+                      onLevel(server.id, next as ConnectorCapabilityLevel)
+                    }
+                    value={level}
+                  >
+                    <SelectTrigger
+                      aria-label={`${server.title} capability`}
+                      className="w-36"
+                    >
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">No access</SelectItem>
+                      {hasRead ? (
+                        <SelectItem value="read">Read only</SelectItem>
+                      ) : null}
+                      {hasNonDestructive ? (
+                        <SelectItem value="write">Read and write</SelectItem>
+                      ) : null}
+                      <SelectItem value="delete">Full access</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </ItemActions>
+              </Item>
+            );
+          })}
+        </div>
+      )}
     </StepItem>
   );
 }

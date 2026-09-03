@@ -1,5 +1,5 @@
 import { IconArrowUpRight, IconChevronDown } from "@tabler/icons-react";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, useParams } from "@tanstack/react-router";
 import { useState } from "react";
 import {
@@ -23,7 +23,10 @@ import {
   ItemTitle,
 } from "@/components/ui/item";
 import { Separator } from "@/components/ui/separator";
-import { connectAccountMutationOptions } from "@/lib/plugins/mutations";
+import {
+  connectAccountMutationOptions,
+  disconnectAccountMutationOptions,
+} from "@/lib/plugins/mutations";
 import {
   connectionsQueryOptions,
   pluginsPageQueryOptions,
@@ -47,6 +50,7 @@ function RouteComponent() {
   });
   const plugins = useQuery(pluginsPageQueryOptions());
   const connections = useQuery(connectionsQueryOptions());
+  const queryClient = useQueryClient();
   const [notice, setNotice] = useState<string | null>(null);
 
   const connect = useMutation({
@@ -58,6 +62,14 @@ function RouteComponent() {
      */
     onSuccess: (authorizationUrl) => {
       window.location.href = authorizationUrl;
+    },
+  });
+  const disconnect = useMutation({
+    ...disconnectAccountMutationOptions(queryClient),
+    onError: (thrown: Error) => setNotice(thrown.message),
+    onSuccess: () => {
+      setNotice(null);
+      void queryClient.invalidateQueries({ queryKey: ["plugins"] });
     },
   });
 
@@ -81,7 +93,7 @@ function RouteComponent() {
    * administrator has not enabled cannot be consented to — there is no OAuth client behind it. Both
    * say which it is rather than drawing a switch that cannot work.
    */
-  if (entry?.auth !== "user-oauth") {
+  if (entry?.auth !== "user-oauth" && entry?.auth !== "managed-user") {
     return (
       <PageShell
         backButton={back}
@@ -120,9 +132,14 @@ function RouteComponent() {
               <ItemDescription>
                 {!enabled
                   ? "An administrator has not enabled this connector, so there is nothing to connect to yet."
-                  : connection
-                    ? "A Bot granted its tools reads this as you, and sees only what you can see."
-                    : "No Bot can read this as you. Connecting takes you to the vendor to consent."}
+                  : entry.auth === "managed-user" &&
+                      !plugins.data?.managedAuthConfigured
+                    ? "This deployment has not configured its managed connection service yet."
+                    : connection
+                      ? "A Bot granted its tools reads this as you, and sees only what you can see."
+                      : entry.managedBy
+                        ? `No Bot can read this as you. ${entry.managedBy === "composio" ? "Composio" : entry.managedBy} handles the vendor consent and keeps the credentials outside OpenBot.`
+                        : "No Bot can read this as you. Connecting takes you to the vendor to consent."}
               </ItemDescription>
             </ItemContent>
             <ItemActions>
@@ -154,19 +171,14 @@ function RouteComponent() {
                    */}
                   <DropdownMenuContent align="end" className="w-auto">
                     <DropdownMenuItem
-                      onClick={() =>
-                        /*
-                         * NOT BUILT YET, and it says so rather than appearing to work.
-                         *
-                         * Withdrawing is three acts — revoke at the vendor, revoke the vault
-                         * credential, delete the row — and none exist. An item that closed the menu
-                         * and changed nothing would report that access had been withdrawn when it
-                         * had not, which is the one outcome worse than not offering it.
-                         */
-                        setNotice(
-                          `Disconnecting is not built yet. Until it is, revoke it in your ${entry.vendor} account's third-party access settings — that stops this deployment reading anything immediately.`,
-                        )
-                      }
+                      disabled={disconnect.isPending}
+                      onClick={() => {
+                        setNotice(null);
+                        disconnect.mutate({
+                          serverId: key,
+                          connectionId: connection.connectionId,
+                        });
+                      }}
                       className="whitespace-nowrap"
                       variant="destructive"
                     >
@@ -180,7 +192,12 @@ function RouteComponent() {
                  * vendor's own consent page, and a control that navigates away should look like one.
                  */
                 <Button
-                  disabled={!enabled || connect.isPending}
+                  disabled={
+                    !enabled ||
+                    connect.isPending ||
+                    (entry.auth === "managed-user" &&
+                      !plugins.data?.managedAuthConfigured)
+                  }
                   onClick={() => {
                     setNotice(null);
                     connect.mutate(key);
@@ -208,7 +225,8 @@ function RouteComponent() {
               <ItemContent>
                 <ItemTitle>Granted</ItemTitle>
                 <ItemDescription className="line-clamp-none">
-                  {connection.scope || "The vendor named no scope."}
+                  {connection.scope ||
+                    "The connection provider named no scope."}
                 </ItemDescription>
               </ItemContent>
             </Item>

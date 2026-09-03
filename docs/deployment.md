@@ -4,6 +4,10 @@ OpenBot ships as one container. It carries the app, the API that serves it, and 
 computer the Bots drive, and it can carry its own PostgreSQL as well. It does what it does on a
 laptop.
 
+This is also the current customer boundary: a hosted OpenBot should run one deployment and one
+database per customer workspace. When managed connectors are enabled, give that deployment its own
+Composio project and project key. See [Composio in a hosted OpenBot](composio-saas.md).
+
 ```sh
 docker build -t openbot .
 
@@ -85,6 +89,10 @@ and the fix would not be available.
 | `EMBEDDED_POSTGRES` | `on` to run the database inside the container. Off by default |
 | `KEY_ENCRYPTION_KEY` | base64 32 bytes. `openssl rand -base64 32`. The example key is refused in production |
 | a model key | `OPENAI_API_KEY`, or the provider you configured |
+
+Set a unique `DEPLOYMENT_ID` for every customer workspace and environment. If managed connectors are
+enabled, set `COMPOSIO_API_KEY` to only that deployment's project key. The organization key used to
+create projects must not be present in the runtime environment.
 
 `COMPUTER_TOKEN` is generated at start if you do not set one. Both processes that need it are inside
 the container, so there is nothing to share it with.

@@ -76,6 +76,7 @@ import { channelThreads } from "./db/schema";
 import { createOnboardingStore } from "./people/onboarding";
 import { createPeopleStore } from "./people/store";
 import { useRoutineTools } from "./plugins/builtin-routines";
+import { createComposioConnector } from "./plugins/managed-connector";
 import { redirectUriFor } from "./plugins/oauth";
 import { createPluginStore } from "./plugins/store";
 import { grantedSkills, grantedTools } from "./plugins/tools";
@@ -328,6 +329,14 @@ const pluginStore = createPluginStore({
   credentials: credentialStore,
   encryptionKey: config.keyEncryptionKey,
   policy: () => policyStore.get(),
+  ...(config.composioApiKey
+    ? {
+        managedConnector: createComposioConnector({
+          apiKey: config.composioApiKey,
+          deploymentNamespace: config.deploymentId ?? tenantPackage.tenantId,
+        }),
+      }
+    : {}),
   /*
    * Where a vendor sends people back, for a vendor whose client this deployment registers itself.
    *

@@ -173,6 +173,11 @@ export type DeploymentConfig = {
    */
   publicUrl: string | undefined;
   /**
+   * Identifies this deployment to the managed connector service. It is never a provider OAuth
+   * client and grants no access to a person's Google, Notion, or other connected account by itself.
+   */
+  composioApiKey: string | undefined;
+  /**
    * Where the browser app is served from, with no trailing slash.
    *
    * Separate from {@link DeploymentConfig.publicUrl} because they are genuinely two addresses: the
@@ -903,6 +908,18 @@ export function loadConfig(
     environment,
     configuredAuthProviders(auth).length > 0,
   );
+  const deploymentId = optional(environment, "DEPLOYMENT_ID");
+  const composioApiKey = optional(environment, "COMPOSIO_API_KEY");
+  if (composioApiKey && !composioApiKey.startsWith("ak_")) {
+    throw new Error(
+      "COMPOSIO_API_KEY must be a Composio project API key beginning with ak_",
+    );
+  }
+  if (composioApiKey && !deploymentId) {
+    throw new Error(
+      "DEPLOYMENT_ID is required when COMPOSIO_API_KEY is set so managed-connector users cannot collide across customer deployments",
+    );
+  }
 
   return {
     databaseUrl: required(environment, "DATABASE_URL"),
@@ -910,10 +927,11 @@ export function loadConfig(
     ...(managedAgent ? { managedAgent } : {}),
     agentProviders,
     agentEndpointAllowedHosts: agentEndpointAllowedHosts(environment),
-    deploymentId: optional(environment, "DEPLOYMENT_ID"),
+    deploymentId,
     publicUrl: (
       optional(environment, "OPENBOT_PUBLIC_URL") ?? auth?.baseUrl
     )?.replace(/\/+$/, ""),
+    composioApiKey,
     appUrl: (
       optional(environment, "OPENBOT_APP_URL") ??
       commaSeparated(environment, "TRUSTED_ORIGINS")[0] ??

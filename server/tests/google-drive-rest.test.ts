@@ -1,5 +1,4 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { catalogueEntry } from "../src/plugins/catalogue";
 import { callTool, listTools } from "../src/plugins/google-drive-rest";
 import { transportFor } from "../src/plugins/transport";
 
@@ -41,14 +40,7 @@ function stubFetch(
   return calls;
 }
 
-describe("the adapter is the transport the catalogue asks for", () => {
-  test("the Drive entry resolves to this adapter, not to MCP", async () => {
-    const entry = catalogueEntry("google-drive");
-    expect(entry?.transport).toBe("google-drive-rest");
-    // Identity, not shape: proves the registry wired this module rather than something MCP-shaped.
-    expect(transportFor(entry).callTool).toBe(callTool);
-  });
-
+describe("the legacy adapter remains bounded on its own", () => {
   test("a server with no catalogue entry falls back to MCP", () => {
     // A custom server an administrator added by URL is somebody else's MCP endpoint by definition.
     expect(transportFor(null).callTool).not.toBe(callTool);

@@ -108,6 +108,23 @@ helm upgrade --install openbot charts/openbot \
 it in a file anybody commits. The chart marks the Secret it creates `helm.sh/resource-policy: keep`,
 so an uninstall does not take the key that every stored credential was encrypted with.
 
+### One managed-connector project per customer
+
+When this is a hosted customer deployment, give it a unique `config.deploymentId` and its own
+Composio project. Put only that project's key in the deployment Secret:
+
+```yaml
+config:
+  deploymentId: openbot-ws-01h-customer-production-...
+secrets:
+  existingSecret: openbot-customer-secrets
+```
+
+If the chart reads an existing Secret or External Secret, the key name is
+`composio-project-api-key`. The Composio organization key that provisions projects must never be
+mounted into these pods. See [Composio in a hosted OpenBot](../../docs/composio-saas.md) for the
+provisioning command and control-plane boundary.
+
 ## What the defaults assume
 
 **A plain cluster with no cloud features.** The cluster's own default StorageClass, no RuntimeClass,

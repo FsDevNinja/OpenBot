@@ -123,7 +123,7 @@ export type PolicyContext = {
    * Split out rather than left in `tool.name`. The offered tool name is `mcp__jira__editJiraIssue`,
    * and asking an operator to write string surgery against that to say "nothing may write to Jira"
    * would guarantee rules that are subtly wrong the first time a vendor renames something. Server,
-   * tool and effect are three plain fields instead.
+   * tool, effect and operation are plain fields instead.
    *
    * `effect` is decided by the server's own advertised catalogue crossed with a reviewed list of
    * which of its tools change things, and it fails closed: anything not positively known to be a
@@ -138,6 +138,13 @@ export type PolicyContext = {
      * neutral binding in the gateway, and the same reasoning the browser fields carry on an MCP call.
      */
     effect: "read" | "write" | "";
+    /**
+     * Provider safety hint: `read`, `write`, or `delete`. It is `""` for a non-MCP action.
+     * `effect` remains the fail-closed enforcement class, so a remotely tagged read still receives
+     * write scrutiny unless reviewed policy says otherwise; operation lets a workspace explicitly
+     * draw a stricter boundary around destructive calls.
+     */
+    operation: "read" | "write" | "delete" | "";
   };
   /**
    * The command a Bot is about to run on its computer, verbatim.

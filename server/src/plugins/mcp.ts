@@ -78,10 +78,22 @@ export function resultText(content: unknown): {
   };
 }
 
+/**
+ * The kind of change a tool advertises, for permission review in the admin UI.
+ *
+ * `delete` is deliberately separate here even though policy treats it as a write. An administrator
+ * deciding what to grant needs to be able to exclude destructive operations in one gesture; the
+ * call-time boundary still gets the coarser read/write effect and therefore never makes a delete
+ * less restricted because it has a more precise display label.
+ */
+export type ToolOperation = "read" | "write" | "delete";
+
 export type McpTool = {
   name: string;
   description: string;
   inputSchema: Record<string, unknown>;
+  /** Absent when the protocol supplied no trustworthy operation metadata. */
+  operation?: ToolOperation;
 };
 
 export class McpServerError extends Error {

@@ -17,10 +17,14 @@ export function useStartChannel() {
 
   return {
     pending: createChannel.isPending,
-    start: async (agentId: string, text: string) => {
+    start: async (
+      agentId: string,
+      text: string,
+      instructions: readonly string[] = [],
+    ) => {
       const channel = await createChannel.mutateAsync([agentId]);
       queryClient.setQueryData(channelKeys.detail(channel.id), channel);
-      stashFirstMessage(channel.id, text);
+      stashFirstMessage(channel.id, text, instructions);
       await navigate({
         params: { channelId: channel.id },
         replace: true,

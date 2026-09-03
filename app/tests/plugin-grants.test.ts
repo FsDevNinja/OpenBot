@@ -2,17 +2,16 @@ import { afterEach, expect, test } from "bun:test";
 import type { QueryClient } from "@tanstack/react-query";
 import {
   grantPlugin,
+  grantPlugins,
+  setAgentConnectorCapability,
   setPluginGrantMutationOptions,
 } from "../src/lib/plugins/mutations";
 
 /**
  * Granting a batch of tools, and what a batch is allowed to cost.
  *
- * The admin dialog grants a tool per Bot per tick, so choosing two Bots and twelve tools is
- * twenty-four writes. Every one of them used to go through the grant mutation, which invalidates
- * every plugin query and waits for the refetch — so most of the wait was re-reading a list hidden
- * behind the dialog. `grantPlugin` is the write on its own, and the caller refetches once at the
- * end. These pin that the write is unchanged and that the refetch is not attached to it.
+ * Exact grants remain available to older and administrator callers. The coworker screen now sends
+ * one connector-sized capability decision and lets the server replace the exact set atomically.
  */
 
 const realFetch = globalThis.fetch;
@@ -73,6 +72,43 @@ test("a batch of grants is N grant requests and nothing else", async () => {
     "POST",
     "POST",
   ]);
+});
+
+test("a bulk grant is one request regardless of the number of tool and Bot pairs", async () => {
+  const seen = capturingFetch(200, { granted: 6 });
+
+  await grantPlugins({
+    agentIds: ["agent-1", "agent-2"],
+    refs: ["github/search", "github/list", "github/get"],
+  });
+
+  expect(seen).toHaveLength(1);
+  expect(seen[0]?.url).toBe("/api/plugins/grants/bulk");
+  expect(seen[0]?.init?.method).toBe("POST");
+  expect(JSON.parse(String(seen[0]?.init?.body))).toEqual({
+    kind: "mcp",
+    refs: ["github/search", "github/list", "github/get"],
+    agentIds: ["agent-1", "agent-2"],
+  });
+});
+
+test("a coworker capability is one connector-sized decision", async () => {
+  const seen = capturingFetch(200, { tools: 749 });
+
+  await setAgentConnectorCapability({
+    agentId: "researcher",
+    serverId: "composio-github",
+    level: "write",
+  });
+
+  expect(seen).toHaveLength(1);
+  expect(seen[0]?.url).toBe("/api/plugins/grants/capability");
+  expect(seen[0]?.init?.method).toBe("PUT");
+  expect(JSON.parse(String(seen[0]?.init?.body))).toEqual({
+    agentId: "researcher",
+    serverId: "composio-github",
+    level: "write",
+  });
 });
 
 test("a refused grant carries the server's own sentence", async () => {

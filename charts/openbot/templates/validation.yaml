@@ -188,6 +188,16 @@ This template renders nothing.
 {{- end }}
 
 {{- /*
+  A project key with no customer boundary.
+
+  This can only inspect a value the chart holds. For existing and external Secrets the value is
+  deliberately unreadable here, so their operators must follow the same contract themselves.
+*/}}
+{{- if and .Values.secrets.composioProjectApiKey (not .Values.config.deploymentId) }}
+{{- fail "secrets.composioProjectApiKey requires config.deploymentId. The deployment id namespaces managed-connector users across customer deployments." }}
+{{- end }}
+
+{{- /*
   A replica count that cannot survive the thing replicas are for.
 
   One replica is a supported way to run this and not the default, so this is a note rather than a

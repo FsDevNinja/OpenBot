@@ -122,12 +122,14 @@ function grantsApp(
   },
 ) {
   const calls: Array<{ verb: string; kind: string; ref: string }> = [];
+  const targets: string[] = [];
   const store = {
     listServers: async () => [],
     listSkills: async () => [],
     listGrants: async () => [],
-    grant: async (kind: string, ref: string) => {
+    grant: async (kind: string, ref: string, agentId: string) => {
       calls.push({ verb: "grant", kind, ref });
+      targets.push(agentId);
     },
     revoke: async (kind: string, ref: string) => {
       calls.push({ verb: "revoke", kind, ref });
@@ -150,8 +152,177 @@ function grantsApp(
     store as never,
   );
 
-  return { calls, app };
+  return { calls, targets, app };
 }
+
+describe("bulk MCP grants", () => {
+  test("deduplicates the request and grants every tool/Bot pair", async () => {
+    const { calls, targets, app } = grantsApp();
+
+    const response = await app.request(
+      "http://openbot.test/api/plugins/grants/bulk",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          kind: "mcp",
+          refs: ["github/list", "github/get", "github/list"],
+          agentIds: ["assistant", "researcher"],
+        }),
+      },
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ ok: true, granted: 4 });
+    expect(calls).toHaveLength(4);
+    expect(calls.map((call) => call.ref).sort()).toEqual([
+      "github/get",
+      "github/get",
+      "github/list",
+      "github/list",
+    ]);
+    expect(targets.sort()).toEqual([
+      "assistant",
+      "assistant",
+      "researcher",
+      "researcher",
+    ]);
+  });
+
+  test("requires an administrator before writing any pair", async () => {
+    const { calls, app } = grantsApp("user");
+
+    const response = await app.request(
+      "http://openbot.test/api/plugins/grants/bulk",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          kind: "mcp",
+          refs: ["github/list"],
+          agentIds: ["assistant"],
+        }),
+      },
+    );
+
+    expect(response.status).toBe(403);
+    expect(calls).toEqual([]);
+  });
+});
+
+function capabilityApp(
+  role: "admin" | "user" = "user",
+  owner: string | null | undefined = ADMIN.id,
+  tools: Array<{ ref: string; operation: "read" | "write" | "delete" }> = [
+    { ref: "composio-github/get", operation: "read" },
+    { ref: "composio-github/create", operation: "write" },
+    { ref: "composio-github/delete", operation: "delete" },
+  ],
+) {
+  const changes: Array<{
+    agentId: string;
+    serverId: string;
+    refs: readonly string[];
+    level: string;
+  }> = [];
+  const store = {
+    listServers: async () => [
+      {
+        id: "composio-github",
+        tools,
+      },
+    ],
+    listSkills: async () => [],
+    listGrants: async () => [],
+    agentOwner: async () => owner,
+    setMcpCapability: async (input: {
+      agentId: string;
+      serverId: string;
+      refs: readonly string[];
+      level: string;
+    }) => {
+      changes.push(input);
+    },
+  };
+  const app = createApp(
+    loadConfig(testEnvironment()),
+    {
+      handler: () => new Response(null, { status: 204 }),
+      api: { getSession: async () => ({ user: ADMIN }) },
+    } as never,
+    { rolesForUser: async () => [role] },
+    ...(Array.from({ length: 11 }) as never[]),
+    store as never,
+  );
+  const set = (level: string, serverId = "composio-github") =>
+    app.request("http://openbot.test/api/plugins/grants/capability", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ agentId: "researcher", serverId, level }),
+    });
+  return { changes, set };
+}
+
+describe("connector capabilities on a Bot", () => {
+  test("an owner chooses a safe bundle instead of individual tools", async () => {
+    const { changes, set } = capabilityApp();
+
+    expect((await set("read")).status).toBe(200);
+    expect(changes).toEqual([
+      {
+        agentId: "researcher",
+        serverId: "composio-github",
+        refs: ["composio-github/get"],
+        level: "read",
+        by: ADMIN.email,
+      },
+    ]);
+  });
+
+  test("standard access includes writes and excludes destructive tools", async () => {
+    const { changes, set } = capabilityApp();
+
+    expect((await set("write")).status).toBe(200);
+    expect(changes[0]?.refs).toEqual([
+      "composio-github/get",
+      "composio-github/create",
+    ]);
+  });
+
+  test("somebody else gets one refusal without learning whether the Bot exists", async () => {
+    for (const owner of ["somebody-else", null]) {
+      const { changes, set } = capabilityApp("user", owner);
+      const response = await set("read");
+      expect(response.status).toBe(403);
+      expect(await response.json()).toEqual({
+        error: "You can only choose capabilities for Bots you own.",
+      });
+      expect(changes).toEqual([]);
+    }
+  });
+
+  test("a Bot owner cannot attach a shared deployment credential", async () => {
+    const { changes, set } = capabilityApp();
+    const response = await set("read", "custom-shared");
+
+    expect(response.status).toBe(403);
+    expect((await response.json()).error).toContain("shared deployment");
+    expect(changes).toEqual([]);
+  });
+
+  test("refuses a tier that would silently grant no tools", async () => {
+    const { changes, set } = capabilityApp("user", ADMIN.id, [
+      { ref: "composio-github/delete", operation: "delete" },
+    ]);
+    const response = await set("read");
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({
+      error: "This connector does not offer tools at that capability level.",
+    });
+    expect(changes).toEqual([]);
+  });
+});
 
 describe("granting one Bot to another", () => {
   test("an administrator can grant it", async () => {

@@ -23,7 +23,11 @@ import {
   toDraft,
 } from "./draft";
 import { PLACEHOLDER_COMMANDS } from "./sources";
-import { type AgentOption, buildTriggers } from "./triggers";
+import {
+  type AgentOption,
+  buildTriggers,
+  type ConnectionOption,
+} from "./triggers";
 
 const MAX_HEIGHT_PX = 220;
 /**
@@ -43,6 +47,8 @@ export type ComposerProps = {
   compact?: boolean;
   /** Agents that `@` can address. Empty means the mention menu reports an empty channel. */
   agents?: readonly AgentOption[];
+  /** The signed-in person's connected accounts, offered in the same `@` menu as agents. */
+  connections?: readonly ConnectionOption[];
   commands?: readonly CommandOption[];
   /**
    * Receives the whole draft rather than a string, so a mention or a command reaches the caller as
@@ -108,6 +114,7 @@ export function Composer({
   editorClassName,
   compact = false,
   agents = [],
+  connections = [],
   commands = PLACEHOLDER_COMMANDS,
   onSubmit,
   onQueue,
@@ -131,8 +138,8 @@ export function Composer({
 
   const isBusy = pending || isSubmitting;
   const triggers = useMemo(
-    () => buildTriggers({ agents, commands }),
-    [agents, commands],
+    () => buildTriggers({ agents, connections, commands }),
+    [agents, connections, commands],
   );
   const draft = useMemo(() => toDraft(value), [value]);
 

@@ -21,6 +21,10 @@ import {
   agentQueryOptions,
 } from "@/lib/agents/queries";
 import { useStartChannel } from "@/lib/channels/start";
+import {
+  connectionMentionInstructions,
+  useConnectionMentions,
+} from "@/lib/plugins/connection-mentions";
 import { useSkillCommands } from "@/lib/plugins/skill-commands";
 import { newId } from "../../../../lib/new-id";
 
@@ -61,6 +65,7 @@ function RouteComponent() {
     ? [{ id: chosen.id, name: chosen.name }]
     : [];
   const skillCommands = useSkillCommands(chosen?.id ?? "");
+  const connectionMentions = useConnectionMentions();
 
   return (
     <div className="flex h-full flex-col">
@@ -122,6 +127,7 @@ function RouteComponent() {
         autoFocus
         // Commands must be loaded before the first channel message is sent.
         commands={skillCommands}
+        connections={connectionMentions}
         disabled={recipients.length === 0}
         messages={sent ? [sent] : []}
         notice={
@@ -139,7 +145,19 @@ function RouteComponent() {
           setSent(seedMessage(draft.text, newId()));
 
           try {
-            await start(recipient.id, draft.text);
+            const skillInstructions = draft.commandIds.flatMap((id) => {
+              const prompt = skillCommands.find(
+                (command) => command.id === id,
+              )?.prompt;
+              return prompt ? [prompt] : [];
+            });
+            await start(recipient.id, draft.text, [
+              ...skillInstructions,
+              ...connectionMentionInstructions(
+                draft.connectionIds,
+                connectionMentions,
+              ),
+            ]);
           } catch (caught) {
             // Preserve the unsent draft when channel creation fails.
             setSent(null);

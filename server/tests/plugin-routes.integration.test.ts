@@ -47,6 +47,34 @@ const store = createPluginStore({
   },
   encryptionKey: "x".repeat(44),
   policy: () => ({ mode: "enforce", deny: [], allow: ["true"] }),
+  managedConnector: {
+    provider: "composio",
+    listToolkits: async () => [
+      {
+        slug: "googledrive",
+        name: "Google Drive",
+        description: "Files in the Drive of whoever is asking.",
+        logoUrl: null,
+        categories: ["Productivity"],
+        toolsCount: 0,
+      },
+      {
+        slug: "slack",
+        name: "Slack",
+        description: "Messages in the Slack of whoever is asking.",
+        logoUrl: null,
+        categories: ["Communication"],
+        toolsCount: 0,
+      },
+    ],
+    beginConnection: async () => {
+      throw new Error("not used here");
+    },
+    connectionsFor: async () => [],
+    disconnect: async () => {},
+    listTools: async () => [],
+    callTool: async () => ({ text: "", isError: false, truncated: false }),
+  },
 });
 
 const ADMIN = {
@@ -61,7 +89,17 @@ function request(
   role: "admin" | "user" = "admin",
   path = "/api/plugins/servers",
 ) {
-  const app = createApp(
+  const app = application(role);
+
+  return app.request(`http://openbot.test${path}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+function application(role: "admin" | "user" = "admin") {
+  return createApp(
     loadConfig(testEnvironment()),
     {
       handler: () => new Response(null, { status: 204 }),
@@ -72,15 +110,10 @@ function request(
     ...(Array.from({ length: 11 }) as never[]),
     store as never,
   );
-
-  return app.request(`http://openbot.test${path}`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
-  });
 }
 
 const serverId = "google-drive";
+const dynamicServerId = "composio-slack";
 const suffix = randomUUID().slice(0, 8);
 const personalCredentialId = randomUUID();
 const customServerId = `route-custom-${suffix}`;
@@ -139,6 +172,8 @@ afterAll(async () => {
   }
   await database.delete(mcpTools).where(eq(mcpTools.serverId, customServerId));
   await database.delete(mcpServers).where(eq(mcpServers.id, customServerId));
+  await database.delete(mcpTools).where(eq(mcpTools.serverId, dynamicServerId));
+  await database.delete(mcpServers).where(eq(mcpServers.id, dynamicServerId));
   await database
     .delete(credentials)
     .where(
@@ -159,6 +194,51 @@ async function serverRow() {
 }
 
 describe("adding a curated server over HTTP", () => {
+  test("the admin catalogue comes from Composio and preserves OpenBot built-ins", async () => {
+    const response = await application().request(
+      "http://openbot.test/api/plugins",
+    );
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      catalogue: Array<Record<string, unknown>>;
+      catalogueError: string | null;
+    };
+    expect(body.catalogueError).toBeNull();
+    expect(body.catalogue).toContainEqual(
+      expect.objectContaining({
+        key: dynamicServerId,
+        title: "Slack",
+        source: "composio",
+        categories: ["Communication"],
+      }),
+    );
+    expect(body.catalogue).toContainEqual(
+      expect.objectContaining({ key: "routines", source: "openbot" }),
+    );
+  });
+
+  test("a live Composio toolkit can be enabled without an OpenBot release", async () => {
+    const response = await request({ key: dynamicServerId });
+
+    expect(response.status).toBe(200);
+    expect((await response.json()).server).toMatchObject({
+      id: dynamicServerId,
+      title: "Slack",
+      hasCredential: false,
+    });
+  });
+
+  test("a crafted Composio key that is absent from the live catalogue is refused", async () => {
+    const response = await request({ key: "composio-not-in-catalogue" });
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({
+      error:
+        "composio-not-in-catalogue is not a server this deployment will connect to.",
+    });
+  });
+
   test("a credential of the wrong kind is refused, and nothing is written", async () => {
     const before = await serverRow();
 
@@ -188,12 +268,8 @@ describe("adding a curated server over HTTP", () => {
 
     expect(response.status).toBe(200);
     expect((await response.json()).server.id).toBe(serverId);
-    // Whatever the column held before, not null: an add that names no credential leaves a registered
-    // OAuth client alone, so asserting null here would pass on a fresh database and fail on the one
-    // deployment shape that behaviour exists for.
-    expect(await serverRow()).toEqual({
-      credentialId: existing?.credentialId ?? null,
-    });
+    // Managed connectors never point at an OAuth client or user token in OpenBot's vault.
+    expect(await serverRow()).toEqual({ credentialId: null });
   });
 
   test("somebody who is not an administrator is refused before the store", async () => {

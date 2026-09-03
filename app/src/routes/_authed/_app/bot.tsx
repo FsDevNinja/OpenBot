@@ -6,14 +6,18 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { ConversationView } from "@/components/channels/conversation-view";
 import { SidebarToggleBar } from "@/components/layout/sidebar-toggle";
 import { Button } from "@/components/ui/button";
-import { agentListQueryOptions } from "@/lib/agents/queries";
 import { useActiveBot } from "@/lib/agent/active-bot";
 import { useBotThread } from "@/lib/agent/bot-thread";
 import { ConversationProvider } from "@/lib/agent/conversation";
 import { repairUnansweredToolCalls } from "@/lib/agent/repair-history";
 import { stoppedReason } from "@/lib/agent/stopped-turn";
 import { readThreadMessages } from "@/lib/agent/thread-messages";
+import { agentListQueryOptions } from "@/lib/agents/queries";
 import { newId } from "@/lib/new-id";
+import {
+  connectionMentionInstructions,
+  useConnectionMentions,
+} from "@/lib/plugins/connection-mentions";
 import { useSkillCommands } from "@/lib/plugins/skill-commands";
 import { useAgent, useOpenBotRuntime } from "@/lib/runtime/provider";
 
@@ -98,6 +102,7 @@ function NativeBotConversation({
   const { agent } = useAgent({ agentId, threadId });
   const { runtime } = useOpenBotRuntime();
   const commands = useSkillCommands(agentId);
+  const connectionMentions = useConnectionMentions();
   const [restoring, setRestoring] = useState(true);
   const [stopped, setStopped] = useState<string | null>(null);
   const [turns, setTurns] = useState(0);
@@ -153,18 +158,22 @@ function NativeBotConversation({
         agents={[{ id: agentId, name }]}
         busy={busy}
         commands={commands}
+        connections={connectionMentions}
         messages={agent.messages as Message[]}
         onStop={() => runtime.stopAgent({ agent })}
         onSubmit={(draft) =>
-          say(
-            draft.text,
-            draft.commandIds.flatMap((id) => {
+          say(draft.text, [
+            ...draft.commandIds.flatMap((id) => {
               const prompt = commands.find(
                 (command) => command.id === id,
               )?.prompt;
               return prompt ? [prompt] : [];
             }),
-          )
+            ...connectionMentionInstructions(
+              draft.connectionIds,
+              connectionMentions,
+            ),
+          ])
         }
         pending={busy}
         restoring={restoring}

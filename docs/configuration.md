@@ -35,7 +35,8 @@ points it at `agent-langgraph` on a laptop, or at `agent-codex` when local Codex
 | `PORT`               | `3001`                             | API server port.                                                    |
 | `NODE_ENV`           | unset                              | `production` refuses the example `KEY_ENCRYPTION_KEY`. It does not decide whether sign-in is required; see `OPENBOT_SINGLE_USER`. |
 | `TENANT_PACKAGE_DIR` | `../examples/fintech`              | Tenant package directory, resolved from `server/`.                  |
-| `DEPLOYMENT_ID`      | the tenant package's id            | Names this deployment in the thread ids it mints.                    |
+| `DEPLOYMENT_ID`      | the tenant package's id            | Names this deployment in thread ids and managed-connector user ids. Use a unique value per customer and environment. |
+| `COMPOSIO_API_KEY`   | unset                              | Project key for this deployment's managed connectors. Never an organization key or a key shared between customers. |
 | `OPENAI_API_KEY`     | unset                              | Deployment model key for package-provided built-in agents and routing. User-created agents use each runner's Settings connection. |
 | `OPENAI_BASE_URL`    | unset                              | OpenAI-compatible endpoint that key is spent against. See below.    |
 | `BOT_PROVIDER`       | `openai`                           | Provider for `agent-langgraph`: `openai`, `anthropic`, or `google`. |
@@ -409,8 +410,10 @@ To run two deployments on one Docker host, give the second one its own `COMPOSE_
 `COMPUTER_NAMESPACE` and `COMPUTER_IMAGE`. Container and volume names are global to a host, and the
 namespace is what keeps each deployment's per-Bot computers its own.
 
-Give it its own `DEPLOYMENT_ID` as well. The name goes into every thread id a deployment mints, so
-ids sent through a shared remote Bot remain distinguishable from another deployment's.
+Give it its own `DEPLOYMENT_ID` as well. The name goes into every thread id a deployment mints and
+namespaces every managed-connector user, so neither can collide with another deployment's. A hosted
+customer deployment should also have its own Composio project; see
+[Composio in a hosted OpenBot](composio-saas.md).
 
 Set `OPENBOT_ONE_COMPUTER_EACH=false` when using `start.sh` to run all Bots against one shared computer.
 

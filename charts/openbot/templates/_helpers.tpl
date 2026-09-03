@@ -134,6 +134,10 @@ and in whatever holds the release, which is not where `KEY_ENCRYPTION_KEY` belon
   value: {{ ternary "on" "off" .Values.server.embeddedComputer | quote }}
 - name: TENANT_PACKAGE_DIR
   value: {{ .Values.config.tenantPackageDir | quote }}
+{{- with .Values.config.deploymentId }}
+- name: DEPLOYMENT_ID
+  value: {{ . | quote }}
+{{- end }}
 {{- if .Values.config.publicUrl }}
 - name: OPENBOT_PUBLIC_URL
   value: {{ .Values.config.publicUrl | quote }}
@@ -300,6 +304,21 @@ and in whatever holds the release, which is not where `KEY_ENCRYPTION_KEY` belon
 {{- with .Values.config.extraEnv }}
 {{ toYaml . }}
 {{- end }}
+{{- end -}}
+
+{{/*
+The managed-connector credential belongs only in the API server.
+
+`commonEnv` also feeds routine and computer-culler jobs. Neither talks to Composio, so putting the
+project key there would hand it to processes that cannot use it and need not hold it.
+*/}}
+{{- define "openbot.composioEnv" -}}
+- name: COMPOSIO_API_KEY
+  valueFrom:
+    secretKeyRef:
+      name: {{ include "openbot.secretName" . }}
+      key: composio-project-api-key
+      optional: true
 {{- end -}}
 
 {{/*

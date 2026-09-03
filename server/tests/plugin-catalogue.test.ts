@@ -4,8 +4,11 @@ import {
   type CatalogueEntry,
   catalogueEntry,
   classifyTool,
+  composioServerKey,
+  composioToolkitSlug,
   customUrlRefusal,
   hostAdmissible,
+  managedCatalogueEntry,
   resolveServerUrl,
   serverCredentialKind,
 } from "../src/plugins/catalogue";
@@ -23,18 +26,18 @@ describe("which servers this deployment will talk to", () => {
   test("a pinned host matches only itself", () => {
     const drive = catalogueEntry("google-drive");
     expect(drive).not.toBeNull();
-    expect(hostAdmissible(drive!, "https://www.googleapis.com")).toBe(true);
+    expect(hostAdmissible(drive!, "https://backend.composio.dev")).toBe(true);
     // A prefix, a suffix and a lookalike are each refused. The suffix case is the one that matters:
     // a check written with endsWith rather than equality would accept it.
-    expect(hostAdmissible(drive!, "https://www.googleapis.com.evil.test")).toBe(
-      false,
-    );
-    expect(hostAdmissible(drive!, "https://evil.test/www.googleapis.com")).toBe(
-      false,
-    );
-    expect(hostAdmissible(drive!, "http://www.googleapis.com")).toBe(false);
-    // The MCP host this entry used to name. Now inadmissible, which is the point of pinning: moving
-    // the entry to the GA API is also a decision to stop talking to the preview endpoint.
+    expect(
+      hostAdmissible(drive!, "https://backend.composio.dev.evil.test"),
+    ).toBe(false);
+    expect(
+      hostAdmissible(drive!, "https://evil.test/backend.composio.dev"),
+    ).toBe(false);
+    expect(hostAdmissible(drive!, "http://backend.composio.dev")).toBe(false);
+    // Direct vendor endpoints are no longer in the authentication or execution path.
+    expect(hostAdmissible(drive!, "https://www.googleapis.com")).toBe(false);
     expect(hostAdmissible(drive!, "https://drivemcp.googleapis.com")).toBe(
       false,
     );
@@ -81,7 +84,7 @@ describe("which servers this deployment will talk to", () => {
     // An instance host offered for a vendor with a pinned host is ignored, not honoured: the host and
     // the path both come from the entry, so nothing a caller sends can reach another endpoint.
     expect(resolveServerUrl("google-drive", "https://evil.test").url).toBe(
-      "https://www.googleapis.com/drive/v3",
+      "https://backend.composio.dev",
     );
   });
 
@@ -110,9 +113,13 @@ describe("whose credential a server uses", () => {
     // whose, and a reader who guessed would guess the deployment's, which for a user-oauth vendor
     // is the one answer that breaks the promise the connector exists to keep.
     for (const entry of CATALOGUE) {
-      expect(["none", "deployment-bearer", "user-oauth", "builtin"]).toContain(
-        entry.auth.kind,
-      );
+      expect([
+        "none",
+        "deployment-bearer",
+        "user-oauth",
+        "managed-user",
+        "builtin",
+      ]).toContain(entry.auth.kind);
     }
   });
 
@@ -156,90 +163,92 @@ describe("whose credential a server uses", () => {
 describe("Google Drive", () => {
   const drive = catalogueEntry("google-drive");
 
-  test("resolves to the one address Google publishes for it", () => {
+  test("resolves only to the managed connector backend", () => {
     expect(drive).not.toBeNull();
-    /*
-     * The GA REST API, not the MCP server. Google publishes both; the MCP one is gated behind the
-     * Workspace Developer Preview Program and refuses an unenrolled project with a message about
-     * permission that describes the project rather than the credential. Swapping back is `transport`
-     * plus these two fields, which is why the transport is asserted alongside the address.
-     */
     expect(resolveServerUrl("google-drive")?.url).toBe(
-      "https://www.googleapis.com/drive/v3",
+      "https://backend.composio.dev",
     );
-    expect(drive?.transport).toBe("google-drive-rest");
+    expect(drive?.transport).toBeUndefined();
   });
 
   test("is reached as the person asking, not as the deployment", () => {
-    expect(drive?.auth.kind).toBe("user-oauth");
+    expect(drive?.auth).toEqual({
+      kind: "managed-user",
+      provider: "composio",
+      toolkit: "googledrive",
+    });
   });
 
-  test("asks only to read", () => {
-    // K1 answers questions and writes nothing. A wider scope would be granted by every person who
-    // connects and used by nothing, which is the kind of permission nobody remembers agreeing to.
-    expect(drive?.auth.kind === "user-oauth" ? drive.auth.scopes : []).toEqual([
-      "https://www.googleapis.com/auth/drive.readonly",
-    ]);
-  });
-
-  test("still calls its writes writes, and lets Google be the one to refuse them", () => {
-    // The read-only scope means these fail at the vendor. They stay classified as writes anyway, so
-    // a boundary written about writes keeps covering them if the scope ever widens.
-    expect(classifyTool(drive, "create_file", true)).toBe("write");
-    expect(classifyTool(drive, "copy_file", true)).toBe("write");
-    expect(classifyTool(drive, "search_files", true)).toBe("read");
-    expect(classifyTool(drive, "read_file_content", true)).toBe("read");
+  test("fails closed when the managed catalogue adds or renames a tool", () => {
+    expect(classifyTool(drive, "GOOGLEDRIVE_CREATE_FILE", true)).toBe("write");
+    expect(classifyTool(drive, "GOOGLEDRIVE_SEARCH_FILES", true)).toBe("write");
   });
 });
 
 describe("Notion", () => {
   const entry = catalogueEntry("notion");
 
-  test("is in the catalogue with the MCP transport", () => {
+  test("is in the catalogue through the managed connector backend", () => {
     expect(entry).not.toBeNull();
-    // Transport omitted means MCP, which is the point: Drive's REST adapter is the exception.
     expect(entry?.transport).toBeUndefined();
-    expect(entry?.host).toBe("https://mcp.notion.com");
-    expect(entry?.path).toBe("/mcp");
+    expect(entry?.host).toBe("https://backend.composio.dev");
+    expect(entry?.path).toBe("/");
   });
 
-  test("registers its client dynamically, with every endpoint pinned to https", () => {
-    if (entry?.auth.kind !== "user-oauth") throw new Error("wrong auth kind");
-    expect(entry.auth.clientRegistration).toBe("dynamic");
-    expect(entry.auth.registrationUrl?.startsWith("https://")).toBe(true);
-    expect(entry.auth.authorizationUrl.startsWith("https://")).toBe(true);
-    expect(entry.auth.tokenUrl.startsWith("https://")).toBe(true);
-    // Notion MCP scoping is the consent screen; scope strings would assert control that
-    // does not exist.
-    expect(entry.auth.scopes).toEqual([]);
+  test("names Composio and its Notion toolkit instead of an OAuth application", () => {
+    expect(entry?.auth).toEqual({
+      kind: "managed-user",
+      provider: "composio",
+      toolkit: "notion",
+    });
   });
 
-  test("pins the exact write list, so a dropped or renamed entry fails here", () => {
-    // Copied from the catalogue's Notion entry, in its declared order. This list is the
-    // entire write barrier for Notion (see the comment above writeTools in catalogue.ts) —
-    // asserting membership against itself would never catch a silently dropped or renamed
-    // tool, so the fix is to pin the literal names.
-    expect(entry?.writeTools).toEqual([
-      "notion-convert-page-to-skill",
-      "notion-create-attachment",
-      "notion-create-comment",
-      "notion-create-database",
-      "notion-create-file-upload",
-      "notion-create-folder",
-      "notion-create-pages",
-      "notion-create-view",
-      "notion-duplicate-page",
-      "notion-move-pages",
-      "notion-update-data-source",
-      "notion-update-folder",
-      "notion-update-page",
-      "notion-update-view",
-    ]);
-    for (const name of entry?.writeTools ?? []) {
-      expect(classifyTool(entry, name, true)).toBe("write");
-    }
-    expect(classifyTool(entry, "notion-search", true)).toBe("read");
+  test("treats the entire remotely managed catalogue as writes", () => {
+    expect(entry?.writeTools).toEqual([]);
+    expect(classifyTool(entry, "NOTION_SEARCH", true)).toBe("write");
+    expect(classifyTool(entry, "NOTION_CREATE_PAGE", true)).toBe("write");
     expect(classifyTool(entry, "brand-new-tool", false)).toBe("write");
+  });
+});
+
+describe("Composio catalogue entries", () => {
+  test("keeps existing connector ids stable and gives new toolkits a namespace", () => {
+    expect(composioServerKey("googledrive")).toBe("google-drive");
+    expect(composioServerKey("notion")).toBe("notion");
+    expect(composioServerKey("slack")).toBe("composio-slack");
+    expect(composioToolkitSlug("google-drive")).toBe("googledrive");
+    expect(composioToolkitSlug("composio-slack")).toBe("slack");
+    expect(composioToolkitSlug("composio-")).toBeNull();
+  });
+
+  test("maps live metadata onto a managed per-person connector", () => {
+    const entry = managedCatalogueEntry({
+      slug: "slack",
+      name: "Slack",
+      description: "Search and send Slack messages.",
+      logoUrl: "https://cdn.example/slack.svg",
+      categories: ["Communication"],
+      toolsCount: 17,
+    });
+
+    expect(entry).toMatchObject({
+      key: "composio-slack",
+      title: "Slack",
+      source: "composio",
+      logoUrl: "https://cdn.example/slack.svg",
+      categories: ["Communication"],
+      toolsCount: 17,
+      auth: {
+        kind: "managed-user",
+        provider: "composio",
+        toolkit: "slack",
+      },
+    });
+    expect(catalogueEntry("composio-slack")?.auth).toEqual({
+      kind: "managed-user",
+      provider: "composio",
+      toolkit: "slack",
+    });
   });
 });
 
@@ -292,8 +301,8 @@ describe("what a tool does", () => {
     expect(classifyTool(drive, "create_file", true)).toBe("write");
   });
 
-  test("an advertised tool that is not a named write is a read", () => {
-    expect(classifyTool(drive, "search_files", true)).toBe("read");
+  test("a managed advertised tool remains a write until reviewed", () => {
+    expect(classifyTool(drive, "GOOGLEDRIVE_SEARCH_FILES", true)).toBe("write");
   });
 
   test("a tool the server never advertised is a write", () => {
@@ -305,12 +314,9 @@ describe("what a tool does", () => {
     expect(classifyTool(null, "anything_at_all", true)).toBe("write");
   });
 
-  test("copying is a write, and reading a file's content is not", () => {
-    // `copy_file` is the case a list built by reading verbs off tool names would miss: it creates
-    // nothing named "create" and still puts a new object in somebody's Drive.
-    expect(classifyTool(drive, "copy_file", true)).toBe("write");
-    expect(classifyTool(drive, "read_file_content", true)).toBe("read");
-    expect(classifyTool(drive, "get_file_metadata", true)).toBe("read");
+  test("managed read-looking names do not bypass the write policy", () => {
+    expect(classifyTool(drive, "GOOGLEDRIVE_READ_FILE", true)).toBe("write");
+    expect(classifyTool(drive, "GOOGLEDRIVE_GET_METADATA", true)).toBe("write");
   });
 });
 
@@ -533,7 +539,7 @@ describe("which credential a curated server is given", () => {
     // Its OAuth client arrives through registerOAuthClient, which mints the credential itself. An id
     // offered here is therefore never the right one, whatever kind it names.
     const drive = catalogueEntry("google-drive");
-    expect(drive?.auth.kind).toBe("user-oauth");
+    expect(drive?.auth.kind).toBe("managed-user");
     expect(serverCredentialKind(drive as CatalogueEntry)).toBeNull();
   });
 

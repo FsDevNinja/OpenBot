@@ -61,6 +61,43 @@ describe("deployment configuration", () => {
     expect(config.tenantPackageDirectory).toBe("../examples/fintech");
   });
 
+  test("keeps the managed connector project key server-side", () => {
+    const config = loadConfig({
+      ...baseEnvironment,
+      DEPLOYMENT_ID: "acme-production",
+      COMPOSIO_API_KEY: "  ak_composio_project_key  ",
+    });
+
+    expect(config.composioApiKey).toBe("ak_composio_project_key");
+  });
+
+  test("requires a deployment boundary around a Composio project key", () => {
+    expect(() =>
+      loadConfig({
+        ...baseEnvironment,
+        COMPOSIO_API_KEY: "ak_composio_project_key",
+      }),
+    ).toThrow("DEPLOYMENT_ID is required when COMPOSIO_API_KEY is set");
+    expect(() =>
+      loadConfig({
+        ...baseEnvironment,
+        DEPLOYMENT_ID: "acme-production",
+        COMPOSIO_API_KEY: "consumer-or-organization-key",
+      }),
+    ).toThrow("project API key beginning with ak_");
+  });
+
+  test("never loads the Composio organization credential into the runtime", () => {
+    const organizationKey = "organization-owner-secret";
+    const config = loadConfig({
+      ...baseEnvironment,
+      COMPOSIO_ORG_API_KEY: organizationKey,
+    });
+
+    expect("composioOrgApiKey" in config).toBe(false);
+    expect(JSON.stringify(config)).not.toContain(organizationKey);
+  });
+
   test("allows deployment without an authentication provider, when asked to", () => {
     const config = loadConfig({
       DATABASE_URL: baseEnvironment.DATABASE_URL,

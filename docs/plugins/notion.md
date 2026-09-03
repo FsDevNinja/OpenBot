@@ -1,79 +1,42 @@
 # Notion
 
-A Bot with this connector granted reaches Notion **as the person asking**, through the hosted MCP
-server Notion runs at `mcp.notion.com`, on the catalogue's default MCP transport. Two people asking
-the same question get the pages their own accounts can see, and neither sees anything they could not
-open themselves. Unlike Google Drive, this connector ships both read and write tools: the writing
-tools are named in the catalogue, and the action policy governs every call the same as any other
-plugin tool.
+Notion is a per-person managed connector. An administrator enables it and decides which Bots may use
+its tools; each person separately connects the Notion workspace those Bots should act as.
 
-Setting it up takes two people, and neither can do the other's half:
+## Authentication ownership
 
-| Who               | Does                                       | Where                        |
-| ----------------- | ------------------------------------------- | ----------------------------- |
-| An administrator  | Enables the connector                       | `/admin/plugins/notion`        |
-| Each person       | Consents with their own Notion account      | `/settings/connected-accounts` |
+OpenBot does not dynamically register a Notion OAuth client and does not store Notion access or
+refresh tokens. Composio owns the OAuth application, hosted consent flow, token exchange, encrypted
+token storage, refresh, and revocation. OpenBot persists connector policy, tool grants, and audit
+events; it receives only opaque connection metadata when it asks Composio for the signed-in
+person's connections.
 
-There is deliberately no endpoint for an administrator to connect an account on somebody's behalf.
+Connections are private and keyed by an opaque id derived from both the OpenBot deployment and user.
+A Bot call cannot fall back to an administrator's connection, another person's connection, another
+customer deployment, or a deployment-wide Notion token.
 
-## What an administrator does
+## Deployment setup
 
-### 1. Enable the connector in OpenBot
+1. Create a distinct Composio project for this deployment and copy its project API key. For a hosted
+   fleet, use the [SaaS provisioning boundary](../composio-saas.md).
+2. Set `COMPOSIO_API_KEY` in the OpenBot server environment.
+3. Restart the server.
+4. Enable Notion at `/admin/plugins/notion`.
+5. Grant only the required tools to the required Bots.
 
-At `/admin/plugins/notion`, turn on **Enable for this deployment**. There is no client to register
-and no secret to paste: this deployment introduces itself to Notion on first connect, over RFC 7591
-dynamic client registration. The prerequisite is a public URL the redirect URI can be derived from —
-`OPENBOT_PUBLIC_URL` if it is set, or the auth base URL it falls back to otherwise — nothing needs to
-be registered at Notion ahead of time.
+There is no Notion integration registration, client secret, dynamic-client state, or OAuth callback
+to configure in OpenBot.
 
-### 2. Connect your own account
+## Personal connection
 
-On the same page, use **Your account** to connect your own Notion account before doing anything
-else here. Unlike Google Drive's tool list, which is OpenBot's own code and needs no credential to
-read, this connector's tool list is an answer from Notion's hosted server: refreshing it takes a
-credential, and the refresh in the next step mints one from the connection belonging to whoever
-presses the button — not whichever account happens to be connected here. That is a personal grant
-like anybody else's, reaching only what your own account can see — not deployment configuration —
-but it has to come first, because an administrator who presses Refresh tools without having
-connected their own account is refused, not lent someone else's.
+Open `/settings/connected-accounts/notion` and choose **Connect**. Composio runs the Notion consent
+flow and returns to OpenBot when it finishes. Disconnecting from the same screen deletes the private
+connected account through Composio.
 
-### 3. Press Refresh tools
+## Governance
 
-This records the tool list Notion's hosted server advertises today, both reads and writes.
+OpenBot continues to enforce its agent grants, action policy, and audit trail locally. Because the
+managed catalogue can add tools independently of this codebase, every managed tool is conservatively
+classified as a write until OpenBot has reviewed richer effect metadata.
 
-Notion has **no read-only scope**. Access is granted per page, at the moment somebody consents, not
-by a scope string the way Google's `drive.readonly` is — so there is nothing at the vendor standing
-behind a tool's read-or-write classification. The catalogue's write-tool list, plus the action
-policy, is the **entire** write barrier for this connector.
-
-That makes reconciling the catalogue's write-tool names against what the live list actually calls
-them, on this first refresh, required rather than cosmetic. A name that has changed at the vendor is
-the dangerous direction, not a safe one: `classifyTool` reads a tool Notion advertises but that no
-longer matches an entry in the write list as a **read**, so an uncorrected rename quietly turns a
-write into something the policy will pass through. The safe direction runs the other way — a tool
-name the server never advertised at all still classifies as a write — but that is not the case this
-refresh exists to catch.
-
-### 4. Grant tools to a Bot
-
-Enabling the connector does not give any Bot access to it. Each tool is granted per Bot, the same as
-every other plugin tool. Every call then checks the grant, evaluates the action policy, and writes an
-audit row.
-
-## What each person does
-
-At `/settings/connected-accounts`, Notion appears once an administrator has enabled it. Open it and
-press **Connect**. That leaves OpenBot for Notion's own consent screen — the arrow on the button says
-so — where the pages and databases to share are chosen, and returns to the same page, which then
-reads **Connected**.
-
-Nothing is cached. OpenBot stores the refresh token and mints a short-lived access token for each
-call, so withdrawing access at Notion takes effect on the next call rather than whenever a cache
-expires.
-
-## See also
-
-- [Architecture](../architecture.md) — where plugins, grants, policy and audit sit.
-- [Configuration](../configuration.md) — `OPENBOT_PUBLIC_URL`, `OPENBOT_APP_URL`, `KEY_ENCRYPTION_KEY`.
-- [Notion's own guide](https://developers.notion.com/guides/mcp/build-mcp-client) to building an MCP
-  client against its hosted server.
+Composio toolkit reference: <https://docs.composio.dev/toolkits/notion>

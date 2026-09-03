@@ -118,6 +118,9 @@ migrations:
 config:
   # Where people reach this deployment. Sets the OAuth callback and the trusted origin.
   publicUrl: ""
+  # Stable id for this customer workspace and environment. Required when deployments share a
+  # tenant package: it namespaces thread ids and managed-connector users across customers.
+  deploymentId: ""
   # Administrators by email address, comma-separated. Required unless singleUser is on.
   initialAdminEmails: ""
   # Every request is one fixed administrator. Local trials only; the deployment refuses to start
@@ -353,6 +356,8 @@ secrets:
   keyEncryptionKey: ""
   betterAuthSecret: ""
   modelApiKey: ""
+  # A project key for this deployment's Composio project, never an organization API key.
+  composioProjectApiKey: ""
   computerToken: ""
   supervisorToken: ""
   # Sent to `config.managedAgent.url` on every call. Required when that url is set.

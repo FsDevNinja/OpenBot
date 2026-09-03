@@ -99,6 +99,7 @@ spec:
               protocol: TCP
           env:
 {{ include "openbot.databaseUrlEnv" . | indent 12 }}
+{{ include "openbot.composioEnv" . | indent 12 }}
 {{ include "openbot.commonEnv" . | indent 12 }}
           envFrom:
             - configMapRef:

@@ -28,14 +28,22 @@ import {
   skillTools,
 } from "../db/schema";
 import {
+  CATALOGUE,
+  type CatalogueAuth,
   type CatalogueEntry,
   catalogueEntry,
   classifyTool,
+  composioServerKey,
   customUrlRefusal,
+  managedCatalogueEntry,
   resolveServerUrl,
   serverCredentialKind,
 } from "./catalogue";
-import { McpServerError } from "./mcp";
+import {
+  type ManagedConnector,
+  ManagedConnectorError,
+} from "./managed-connector";
+import { McpServerError, type McpTool, type ToolOperation } from "./mcp";
 import { registerDynamicClient } from "./oauth";
 import { transportFor } from "./transport";
 
@@ -43,8 +51,8 @@ import { transportFor } from "./transport";
  * Plugins: what this deployment has added, which Bots may use it, and the one path a call takes.
  *
  * The grant and the policy are two different questions and both are asked on every call. The grant
- * answers "is this Bot allowed this tool at all", which an operator decides on the Plugins page. The
- * policy answers "is this particular call permitted right now", which is written as a rule and can
+ * answers "is this Bot allowed this tool at all", represented by exact refs behind a coworker-level
+ * capability choice. The policy answers "is this particular call permitted right now" and can
  * say things a grant cannot: not on this host, not this argument, not a write. Collapsing them would
  * mean an operator who granted a Bot a server had also, invisibly, waived every rule about it.
  */
@@ -82,8 +90,16 @@ export type ToolRecord = {
   /** `<serverId>/<name>`. What a grant names and what the model's tool name is derived from. */
   ref: string;
   effect: "read" | "write";
+  /** Finer grant grouping. Policy still treats `delete` as a write. */
+  operation: ToolOperation;
   grantedTo: string[];
 };
+
+/** A persisted value from an older or hand-edited database must fail closed into the write group. */
+function storedToolOperation(value: string): ToolOperation {
+  if (value === "read" || value === "delete") return value;
+  return "write";
+}
 
 /**
  * A grant naming a tool this server does not currently advertise.
@@ -116,6 +132,8 @@ export type ServerRecord = {
   docsUrl: string;
   /** `first-party` or `custom`. Shown wherever the server is, never inferred by a reader. */
   provenance: string;
+  /** Whose credential a call uses. Bot owners may choose only per-person or builtin capabilities. */
+  auth: CatalogueAuth["kind"];
   hasCredential: boolean;
   toolsRefreshedAt: string | null;
   lastError: string | null;
@@ -319,7 +337,9 @@ const iso = (value: Date | string | null): string | null =>
  * token was used, it is whose rows were touched.
  */
 const reachedAsFor = (entry: CatalogueEntry | null, actorId: string): string =>
-  entry?.auth.kind === "user-oauth" || entry?.auth.kind === "builtin"
+  entry?.auth.kind === "user-oauth" ||
+  entry?.auth.kind === "managed-user" ||
+  entry?.auth.kind === "builtin"
     ? actorId
     : "deployment";
 
@@ -551,6 +571,11 @@ export type PluginStoreOptions = {
   }) => Promise<OAuthClient | null>;
   /** Where the vendor sends people back; needed to (re)register a dynamic client. */
   redirectUri?: string;
+  /**
+   * Owns connector authentication and tool execution for `managed-user` catalogue entries.
+   * OpenBot sends it stable user and toolkit ids, never receives a provider token back.
+   */
+  managedConnector?: ManagedConnector;
 };
 
 export function createPluginStore(options: PluginStoreOptions) {
@@ -564,6 +589,7 @@ export function createPluginStore(options: PluginStoreOptions) {
   const exchangeRefreshToken =
     options.exchangeRefreshToken ?? exchangeRefreshTokenOverHttp;
   const registerClient = options.registerClient ?? registerDynamicClient;
+  const managedConnector = options.managedConnector;
 
   /*
    * One exchange at a time per (server, person). A rotating vendor invalidates the refresh
@@ -1520,8 +1546,28 @@ export function createPluginStore(options: PluginStoreOptions) {
       credentialId?: string;
       by: string;
     }): Promise<ServerRecord> {
-      const resolved = resolveServerUrl(input.key, input.instanceHost);
+      let resolved = resolveServerUrl(input.key, input.instanceHost);
       if (!resolved) throw new CatalogueEntryUnknownError(input.key);
+      if (resolved.entry.auth.kind === "managed-user" && !managedConnector) {
+        throw new CustomServerRefusedError(
+          `${resolved.entry.title} uses managed connections, but Composio is not configured. Set COMPOSIO_API_KEY for this deployment.`,
+        );
+      }
+      if (resolved.entry.auth.kind === "managed-user" && managedConnector) {
+        /*
+         * A composio-prefixed id is recoverable after restart, but that alone must not make it
+         * addable. The current provider catalogue is the allow-list: only a toolkit returned for
+         * this project, with a Composio-managed auth scheme, may become a workspace connector.
+         */
+        const toolkit = (await managedConnector.listToolkits()).find(
+          (candidate) => composioServerKey(candidate.slug) === input.key,
+        );
+        if (!toolkit) throw new CatalogueEntryUnknownError(input.key);
+        const entry = managedCatalogueEntry(toolkit);
+        const managedUrl = resolveServerUrl(entry.key);
+        if (!managedUrl) throw new CatalogueEntryUnknownError(input.key);
+        resolved = { entry, url: managedUrl.url };
+      }
 
       /*
        * The pointer is checked here for the same reason it is on the path below: the refresh that
@@ -1568,7 +1614,11 @@ export function createPluginStore(options: PluginStoreOptions) {
              * to hand it back through this call either, since a `user-oauth` entry now refuses a
              * credential id, so the pointer has to survive here.
              */
-            ...(credentialId ? { credentialId } : {}),
+            ...(resolved.entry.auth.kind === "managed-user"
+              ? { credentialId: null }
+              : credentialId
+                ? { credentialId }
+                : {}),
             addedBy: input.by,
             updatedAt: new Date(),
           },
@@ -1876,16 +1926,8 @@ export function createPluginStore(options: PluginStoreOptions) {
      * Replaced wholesale, never merged. A tool a vendor withdrew has to stop being offered, and a
      * merge would leave it in the list forever as a name the model will happily call.
      *
-     * `actorId` is who is asking, and whether it is needed at all is the transport's answer rather
-     * than an assumption here. Where listing means asking a remote server — MCP — a `user-oauth`
-     * vendor has no deployment credential to ask with, so the listing runs on the grant of whoever
-     * pressed refresh, and an administrator who has not connected gets a refusal that lands in
-     * `lastError`. That is the honest state: until somebody has connected, this deployment genuinely
-     * does not know what that server offers.
-     *
-     * Where the tool list is this deployment's own code, nothing is asked and no credential is
-     * consulted. Requiring one anyway is what made setting Drive up a round trip through an
-     * administrator's personal settings page for a token that was then discarded.
+     * A managed catalogue is listed through its backend without connecting an administrator's
+     * personal account. Direct transports decide whether listing needs the deployment credential.
      *
      * Absent for the refresh that happens right after a server is added, where nobody can have
      * connected yet. It makes no difference to a `deployment-bearer` server, which never consults it.
@@ -1897,32 +1939,27 @@ export function createPluginStore(options: PluginStoreOptions) {
       const { row, entry } = await requireServer(serverId);
 
       try {
-        // The entry decides the protocol. For a custom server there is no entry, and MCP is right.
-        const transport = transportFor(entry);
-
-        /*
-         * A credential only when listing actually needs one.
-         *
-         * Where it is needed, it is taken from the same selection the call path uses rather than by
-         * decrypting `row.credentialId` — which is what this used to do, and which for a `user-oauth`
-         * server would have sent the deployment's OAuth client secret to the vendor as somebody's
-         * access token. One answer to "what token does this server get", and it cannot be a secret of
-         * the wrong kind.
-         *
-         * Where it is NOT needed, asking anyway is not a harmless extra check. For a `user-oauth`
-         * server that call refuses unless the person pressing the button has connected their own
-         * account — so an administrator setting Drive up was blocked at "refresh tools" and sent to
-         * their personal settings page to grant access, so that a token could be minted and handed to
-         * a function that discards it. The gate outlived the reason for it.
-         */
-        const token = transport.listNeedsCredential
-          ? (await connectionTokenFor(row, entry, actorId)).token
-          : undefined;
-
-        const tools = await transport.listTools({
-          url: effectiveUrl(row, entry),
-          token,
-        });
+        const managedAuth =
+          entry?.auth.kind === "managed-user" ? entry.auth : null;
+        let tools: McpTool[];
+        if (managedAuth) {
+          if (!managedConnector) {
+            throw new ManagedConnectorError(
+              `${entry?.title ?? serverId} uses managed connections, but Composio is not configured. Set COMPOSIO_API_KEY for this deployment.`,
+            );
+          }
+          tools = await managedConnector.listTools(managedAuth.toolkit);
+        } else {
+          // The entry decides the protocol. For a custom server there is no entry, and MCP is right.
+          const transport = transportFor(entry);
+          const token = transport.listNeedsCredential
+            ? (await connectionTokenFor(row, entry, actorId)).token
+            : undefined;
+          tools = await transport.listTools({
+            url: effectiveUrl(row, entry),
+            token,
+          });
+        }
 
         /*
          * ONE STEP, because the catch below promises that it is one.
@@ -1951,6 +1988,8 @@ export function createPluginStore(options: PluginStoreOptions) {
                 name: tool.name,
                 description: tool.description,
                 inputSchema: tool.inputSchema,
+                operation:
+                  tool.operation ?? classifyTool(entry, tool.name, true),
               })),
             );
           }
@@ -2094,7 +2133,11 @@ export function createPluginStore(options: PluginStoreOptions) {
           summary: entry?.summary ?? "",
           docsUrl: entry?.docsUrl ?? "",
           provenance: row.provenance,
-          hasCredential: row.credentialId !== null,
+          auth: entry?.auth.kind ?? "deployment-bearer",
+          hasCredential:
+            entry?.auth.kind === "managed-user"
+              ? false
+              : row.credentialId !== null,
           toolsRefreshedAt: iso(row.toolsRefreshedAt),
           lastError: row.lastError,
           addedBy: row.addedBy,
@@ -2105,13 +2148,18 @@ export function createPluginStore(options: PluginStoreOptions) {
             .filter((tool) => tool.serverId === row.id)
             .map((tool) => {
               const ref = `${tool.serverId}/${tool.name}`;
+              const effect = classifyTool(entry, tool.name, true);
               return {
                 serverId: tool.serverId,
                 name: tool.name,
                 description: tool.description,
                 inputSchema: tool.inputSchema as Record<string, unknown>,
                 ref,
-                effect: classifyTool(entry, tool.name, true),
+                effect,
+                operation:
+                  entry?.auth.kind === "managed-user"
+                    ? storedToolOperation(tool.operation)
+                    : effect,
                 grantedTo: grants.get(ref) ?? [],
               };
             }),
@@ -2400,6 +2448,59 @@ export function createPluginStore(options: PluginStoreOptions) {
       });
     },
 
+    /**
+     * Replace one Bot's exact grants for one connector with a reviewed capability level.
+     *
+     * The UI speaks in read, write and destructive bundles because that is a decision a person can
+     * make. The runtime continues to speak in exact refs because every offered and called tool must
+     * still have an unambiguous grant. Replacing the set in one transaction prevents a failed batch
+     * from leaving half of a capability applied, and one audit event records the one decision the
+     * person actually made rather than hundreds of implementation-detail rows.
+     */
+    async setMcpCapability(input: {
+      serverId: string;
+      agentId: string;
+      refs: readonly string[];
+      level: "none" | "read" | "write" | "delete";
+      by: string;
+    }): Promise<void> {
+      await database.transaction(async (transaction) => {
+        await transaction
+          .delete(pluginGrants)
+          .where(
+            and(
+              eq(pluginGrants.kind, "mcp"),
+              eq(pluginGrants.agentId, input.agentId),
+              sql`split_part(${pluginGrants.ref}, '/', 1) = ${input.serverId}`,
+            ),
+          );
+
+        if (input.refs.length > 0) {
+          await transaction.insert(pluginGrants).values(
+            input.refs.map((ref) => ({
+              kind: "mcp",
+              ref,
+              agentId: input.agentId,
+              grantedBy: input.by,
+            })),
+          );
+        }
+      });
+
+      await recordAuditEvent(auditStore, {
+        eventType: "configuration.changed",
+        targetType: "mcp_server",
+        targetId: input.serverId,
+        payload: {
+          actor: input.by,
+          bot: input.agentId,
+          change: "connector_capability_changed",
+          level: input.level,
+          tools: input.refs.length,
+        },
+      });
+    },
+
     async revoke(
       kind: PluginKind,
       ref: string,
@@ -2615,6 +2716,12 @@ export function createPluginStore(options: PluginStoreOptions) {
       refreshToken: string;
       scope: string;
     }): Promise<void> {
+      const { entry } = await requireServer(input.serverId);
+      if (entry?.auth.kind !== "user-oauth") {
+        throw new CustomServerRefusedError(
+          `${input.serverId} does not store user OAuth tokens in OpenBot.`,
+        );
+      }
       const { replaced } = await swapUserCredential(input);
 
       await recordAuditEvent(auditStore, {
@@ -2638,10 +2745,115 @@ export function createPluginStore(options: PluginStoreOptions) {
      */
     oauthClientFor: storedOAuthClient,
 
+    /** Whether managed connectors can be enabled and connected on this deployment. */
+    managedConnectorConfigured(): boolean {
+      return managedConnector !== undefined;
+    },
+
+    /**
+     * The catalogue an administrator may choose from now.
+     *
+     * Built-ins ship with OpenBot. Managed entries come from Composio at read time, so adding a new
+     * integration there does not require an OpenBot release. Already-enabled entries are retained
+     * when that read fails; they are deployment state rather than invented fallback data.
+     */
+    async listCatalogue(): Promise<{
+      entries: CatalogueEntry[];
+      error: string | null;
+    }> {
+      const builtins = CATALOGUE.filter(
+        (entry) => entry.auth.kind !== "managed-user",
+      );
+      const enabledRows = await database
+        .select({
+          id: mcpServers.id,
+          title: mcpServers.title,
+          vendor: mcpServers.vendor,
+        })
+        .from(mcpServers)
+        .where(eq(mcpServers.provenance, "first-party"));
+      const enabledManaged = enabledRows.flatMap((row) => {
+        const entry = catalogueEntry(row.id);
+        return entry?.auth.kind === "managed-user"
+          ? [{ ...entry, title: row.title, vendor: row.vendor }]
+          : [];
+      });
+      const combine = (live: CatalogueEntry[]) => {
+        const entries = new Map(
+          // Persisted rows keep the catalogue usable during an outage; a successful live read wins
+          // so connected rows keep Composio's current description, logo and tool count.
+          [...builtins, ...enabledManaged, ...live].map((entry) => [
+            entry.key,
+            entry,
+          ]),
+        );
+        return [...entries.values()];
+      };
+
+      if (!managedConnector) {
+        return {
+          entries: combine([]),
+          error:
+            "Composio is not configured, so its integration catalogue is unavailable.",
+        };
+      }
+
+      try {
+        const toolkits = await managedConnector.listToolkits();
+        return {
+          entries: combine(toolkits.map(managedCatalogueEntry)),
+          error: null,
+        };
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        return {
+          entries: combine([]),
+          error: detail.slice(0, 400),
+        };
+      }
+    },
+
+    /** Begin a private, per-person connection without creating or reading an OAuth client here. */
+    async beginManagedConnection(input: {
+      serverId: string;
+      userId: string;
+      callbackUrl: string;
+    }): Promise<{ connectionId: string; authorizationUrl: string }> {
+      const { entry } = await requireServer(input.serverId);
+      if (entry?.auth.kind !== "managed-user") {
+        throw new CustomServerRefusedError(
+          `${input.serverId} is not a managed per-person connector.`,
+        );
+      }
+      if (!input.userId) {
+        throw new PluginRefusedError(
+          `${entry.title} answers as the person asking, and this request is not attributed to anybody.`,
+          null,
+        );
+      }
+      if (!managedConnector) {
+        throw new ManagedConnectorError(
+          `${entry.title} uses managed connections, but Composio is not configured. Set COMPOSIO_API_KEY for this deployment.`,
+        );
+      }
+      return managedConnector.beginConnection({
+        userId: input.userId,
+        toolkit: entry.auth.toolkit,
+        callbackUrl: input.callbackUrl,
+      });
+    },
+
     /** Which `user-oauth` servers this person has connected, for their own settings page. */
-    async connectionsFor(
-      userId: string,
-    ): Promise<{ serverId: string; scope: string; connectedAt: string }[]> {
+    async connectionsFor(userId: string): Promise<
+      {
+        serverId: string;
+        title: string;
+        vendor: string;
+        connectionId: string;
+        scope: string;
+        connectedAt: string;
+      }[]
+    > {
       const rows = await database
         .select({
           serverId: mcpUserCredentials.serverId,
@@ -2652,11 +2864,110 @@ export function createPluginStore(options: PluginStoreOptions) {
         .where(eq(mcpUserCredentials.userId, userId))
         .orderBy(asc(mcpUserCredentials.serverId));
 
-      return rows.map((row) => ({
-        serverId: row.serverId,
-        scope: row.scope,
-        connectedAt: iso(row.connectedAt) ?? "",
-      }));
+      const enabled = await database
+        .select({
+          id: mcpServers.id,
+          title: mcpServers.title,
+          vendor: mcpServers.vendor,
+        })
+        .from(mcpServers)
+        .orderBy(asc(mcpServers.id));
+      const displayByServer = new Map(
+        enabled.map((server) => [server.id, server]),
+      );
+
+      const local = rows
+        .filter(
+          (row) => catalogueEntry(row.serverId)?.auth.kind !== "managed-user",
+        )
+        .map((row) => ({
+          serverId: row.serverId,
+          title:
+            displayByServer.get(row.serverId)?.title ??
+            catalogueEntry(row.serverId)?.title ??
+            row.serverId,
+          vendor:
+            displayByServer.get(row.serverId)?.vendor ??
+            catalogueEntry(row.serverId)?.vendor ??
+            row.serverId,
+          connectionId: row.serverId,
+          scope: row.scope,
+          connectedAt: iso(row.connectedAt) ?? "",
+        }));
+
+      if (!managedConnector) return local;
+      const managed = enabled
+        .map(({ id }) => ({ id, entry: catalogueEntry(id) }))
+        .filter(
+          (
+            item,
+          ): item is {
+            id: string;
+            entry: CatalogueEntry & {
+              auth: Extract<CatalogueEntry["auth"], { kind: "managed-user" }>;
+            };
+          } => item.entry?.auth.kind === "managed-user",
+        );
+      const accounts = await managedConnector.connectionsFor({
+        userId,
+        toolkits: managed.map(({ entry }) => entry.auth.toolkit),
+      });
+      const serverByToolkit = new Map(
+        managed.map(({ id, entry }) => [entry.auth.toolkit, id]),
+      );
+      return [
+        ...local,
+        ...accounts.flatMap((account) => {
+          const serverId = serverByToolkit.get(account.toolkit);
+          return serverId
+            ? [
+                {
+                  serverId,
+                  title:
+                    displayByServer.get(serverId)?.title ?? account.toolkit,
+                  vendor:
+                    displayByServer.get(serverId)?.vendor ?? account.toolkit,
+                  connectionId: account.id,
+                  scope: "Managed privately by Composio",
+                  connectedAt: account.connectedAt,
+                },
+              ]
+            : [];
+        }),
+      ];
+    },
+
+    /** Withdraw this person's managed connection at the backend that holds it. */
+    async disconnectManagedConnection(input: {
+      serverId: string;
+      connectionId: string;
+      userId: string;
+      by: string;
+    }): Promise<void> {
+      const { entry } = await requireServer(input.serverId);
+      if (entry?.auth.kind !== "managed-user" || !managedConnector) {
+        throw new CustomServerRefusedError(
+          `${input.serverId} is not an available managed connector.`,
+        );
+      }
+      await managedConnector.disconnect({
+        userId: input.userId,
+        toolkit: entry.auth.toolkit,
+        connectionId: input.connectionId,
+      });
+      await recordAuditEvent(auditStore, {
+        eventType: "mcp.account_disconnected",
+        targetType: "mcp_server",
+        targetId: input.serverId,
+        payload: {
+          actor: input.by,
+          server: input.serverId,
+          owner: input.userId,
+          reason: "person_disconnected",
+          vendorRevoked: true,
+          connectionProvider: managedConnector.provider,
+        },
+      });
     },
 
     /**
@@ -2706,6 +3017,41 @@ export function createPluginStore(options: PluginStoreOptions) {
         );
 
       let retired = 0;
+      if (managedConnector) {
+        const enabled = await database
+          .select({ id: mcpServers.id })
+          .from(mcpServers)
+          .orderBy(asc(mcpServers.id));
+        for (const { id } of enabled) {
+          const entry = catalogueEntry(id);
+          if (entry?.auth.kind !== "managed-user") continue;
+          const accounts = await managedConnector.connectionsFor({
+            userId,
+            toolkits: [entry.auth.toolkit],
+          });
+          for (const account of accounts) {
+            await managedConnector.disconnect({
+              userId,
+              toolkit: entry.auth.toolkit,
+              connectionId: account.id,
+            });
+            retired += 1;
+            await recordAuditEvent(auditStore, {
+              eventType: "mcp.account_disconnected",
+              targetType: "mcp_server",
+              targetId: id,
+              payload: {
+                actor: by,
+                server: id,
+                owner: userId,
+                reason: "person_removed",
+                vendorRevoked: true,
+                connectionProvider: managedConnector.provider,
+              },
+            });
+          }
+        }
+      }
       for (const credential of owned) {
         // Already revoked is not a failure. Retiring twice is something an administrator can
         // legitimately do, and the second time should be quiet rather than an error.
@@ -2815,7 +3161,11 @@ export function createPluginStore(options: PluginStoreOptions) {
       const { row, entry } = await requireServer(serverId);
 
       const advertised = await database
-        .select({ name: mcpTools.name, inputSchema: mcpTools.inputSchema })
+        .select({
+          name: mcpTools.name,
+          inputSchema: mcpTools.inputSchema,
+          operation: mcpTools.operation,
+        })
         .from(mcpTools)
         .where(
           and(eq(mcpTools.serverId, serverId), eq(mcpTools.name, toolName)),
@@ -2823,6 +3173,10 @@ export function createPluginStore(options: PluginStoreOptions) {
         .limit(1);
 
       const effect = classifyTool(entry, toolName, advertised.length > 0);
+      const operation: ToolOperation =
+        entry?.auth.kind === "managed-user"
+          ? storedToolOperation(advertised[0]?.operation)
+          : effect;
 
       const args = withoutEmptyOptionals(
         input.args,
@@ -2859,7 +3213,7 @@ export function createPluginStore(options: PluginStoreOptions) {
         // shell. An empty command matches no such rule.
         command: "",
         intent: effect === "write" ? "write_tool" : "read_tool",
-        mcp: { server: serverId, tool: toolName, effect },
+        mcp: { server: serverId, tool: toolName, effect, operation },
       };
 
       const verdict = evaluateActionPolicy(options.policy(), context);
@@ -2877,6 +3231,7 @@ export function createPluginStore(options: PluginStoreOptions) {
         server: serverId,
         tool: toolName,
         effect,
+        operation,
         /*
          * Whose credential this call goes out with.
          *
@@ -2941,18 +3296,40 @@ export function createPluginStore(options: PluginStoreOptions) {
        * it did.
        */
       try {
-        const { token } = await connectionTokenFor(row, entry, input.actorId);
-        const vendor = injectedVendor ?? transportFor(entry).callTool;
-        const result = await vendor(
-          {
-            url: effectiveUrl(row, entry),
-            token,
-            actorId: input.actorId,
-            botId: input.botId,
-          },
-          toolName,
-          args,
-        );
+        let result: { text: string; isError: boolean };
+        if (entry?.auth.kind === "managed-user") {
+          if (!input.actorId) {
+            throw new PluginRefusedError(
+              `${entry.title} answers as the person asking, and this run is not attributed to anybody.`,
+              null,
+            );
+          }
+          if (!managedConnector) {
+            throw new PluginRefusedError(
+              `${entry.title} uses managed connections, but Composio is not configured for this deployment.`,
+              null,
+            );
+          }
+          result = await managedConnector.callTool({
+            userId: input.actorId,
+            toolkit: entry.auth.toolkit,
+            toolName,
+            args,
+          });
+        } else {
+          const { token } = await connectionTokenFor(row, entry, input.actorId);
+          const vendor = injectedVendor ?? transportFor(entry).callTool;
+          result = await vendor(
+            {
+              url: effectiveUrl(row, entry),
+              token,
+              actorId: input.actorId,
+              botId: input.botId,
+            },
+            toolName,
+            args,
+          );
+        }
         await recordAuditEvent(auditStore, {
           eventType: result.isError ? "mcp.call_failed" : "mcp.call_succeeded",
           targetType: "mcp_tool",

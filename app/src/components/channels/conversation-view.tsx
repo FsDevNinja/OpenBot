@@ -12,6 +12,7 @@ import {
   type CommandOption,
   Composer,
   type ComposerDraft,
+  type ConnectionOption,
   type QueueAction,
   type QueuedMessage,
   reduceQueue,
@@ -24,6 +25,7 @@ export function ConversationView({
   notice,
   agents = [],
   commands,
+  connections = [],
   disabled = false,
   pending = false,
   autoFocus = false,
@@ -43,6 +45,8 @@ export function ConversationView({
    * The `/` menu for this Bot's granted skills, supplied by the route that owns grant loading.
    */
   commands?: readonly CommandOption[];
+  /** The signed-in person's connected accounts, available as `@` mentions. */
+  connections?: readonly ConnectionOption[];
   disabled?: boolean;
   /**
    * A turn is in flight: the Bot has been asked something and has not come back yet.
@@ -229,6 +233,7 @@ export function ConversationView({
           agents={agents}
           autoFocus={autoFocus}
           {...(commands ? { commands } : {})}
+          connections={connections}
           className="w-full mt-auto"
           compact
           disabled={disabled}

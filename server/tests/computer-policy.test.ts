@@ -411,7 +411,12 @@ describe("describing a refusal", () => {
     element: { ref: "", role: "", name: "", type: "" },
     key: "",
     file: { path: "", name: "", extension: "" },
-    mcp: { server: "notes", tool: "search_notes", effect: "read" },
+    mcp: {
+      server: "notes",
+      tool: "search_notes",
+      effect: "read",
+      operation: "read",
+    },
   };
 
   test("a refused tool call names the tool and the server it was aimed at", () => {
@@ -543,7 +548,7 @@ describe("a rule about one surface does not refuse another", () => {
     key: "",
     file: { path: "", name: "", extension: "" },
     command: "",
-    mcp: { server: "", tool: "", effect: "" },
+    mcp: { server: "", tool: "", effect: "", operation: "" },
   };
   const mcpAction: PolicyContext = {
     tool: { name: "mcp__jira__getIssue" },
@@ -555,7 +560,12 @@ describe("a rule about one surface does not refuse another", () => {
     key: "",
     file: { path: "", name: "", extension: "" },
     command: "",
-    mcp: { server: "jira", tool: "getIssue", effect: "read" },
+    mcp: {
+      server: "jira",
+      tool: "getIssue",
+      effect: "read",
+      operation: "read",
+    },
   };
 
   test("an MCP deny rule leaves a browser action alone", () => {
@@ -576,6 +586,18 @@ describe("a rule about one surface does not refuse another", () => {
     }
   });
 
+  test("an MCP destructive-operation rule leaves a browser action alone", () => {
+    const decision = evaluateActionPolicy(
+      {
+        mode: "enforce",
+        deny: ['mcp.operation == "delete"'],
+        allow: ["true"],
+      },
+      browserAction,
+    );
+    expect(decision.allowed).toBe(true);
+  });
+
   test("a shell-command deny rule leaves an MCP call alone", () => {
     const decision = evaluateActionPolicy(
       {
@@ -594,7 +616,34 @@ describe("a rule about one surface does not refuse another", () => {
       {
         ...mcpAction,
         intent: "write_tool",
-        mcp: { server: "jira", tool: "editIssue", effect: "write" },
+        mcp: {
+          server: "jira",
+          tool: "editIssue",
+          effect: "write",
+          operation: "write",
+        },
+      },
+    );
+    expect(decision.allowed).toBe(false);
+    expect(decision.source).toBe("deny");
+  });
+
+  test("a workspace can draw a stricter boundary around destructive tools", () => {
+    const decision = evaluateActionPolicy(
+      {
+        mode: "enforce",
+        deny: ['mcp.operation == "delete"'],
+        allow: ["true"],
+      },
+      {
+        ...mcpAction,
+        intent: "write_tool",
+        mcp: {
+          server: "github",
+          tool: "deleteRepository",
+          effect: "write",
+          operation: "delete",
+        },
       },
     );
     expect(decision.allowed).toBe(false);
@@ -644,7 +693,7 @@ describe("refusal wording under the context the gateway actually builds", () => 
         element: { ref: "e1", role: "button", name: "Submit order", type: "" },
         file: { path: "", name: "", extension: "" },
         command: "",
-        mcp: { server: "", tool: "", effect: "" },
+        mcp: { server: "", tool: "", effect: "", operation: "" },
       },
     );
     expect(decision.allowed).toBe(false);
@@ -665,7 +714,12 @@ describe("refusal wording under the context the gateway actually builds", () => 
         element: { ref: "", role: "", name: "", type: "" },
         file: { path: "", name: "", extension: "" },
         command: "",
-        mcp: { server: "notes", tool: "search_notes", effect: "read" },
+        mcp: {
+          server: "notes",
+          tool: "search_notes",
+          effect: "read",
+          operation: "read",
+        },
       },
     );
     expect(decision.allowed).toBe(false);

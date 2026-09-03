@@ -1,6 +1,11 @@
 import type { TriggerConfig, TriggerSuggestion } from "prompt-area/helpers";
 import { commandTrigger, mentionTrigger } from "prompt-area/helpers";
-import { AGENT_TRIGGER, COMMAND_TRIGGER, type CommandOption } from "./draft";
+import {
+  AGENT_TRIGGER,
+  COMMAND_TRIGGER,
+  type CommandOption,
+  mentionValue,
+} from "./draft";
 
 /**
  * The composer's trigger registry.
@@ -11,6 +16,14 @@ import { AGENT_TRIGGER, COMMAND_TRIGGER, type CommandOption } from "./draft";
 
 export type AgentOption = {
   id: string;
+  name: string;
+  description?: string;
+};
+
+export type ConnectionOption = {
+  /** Stable plugin server id, for example `composio-github`. */
+  id: string;
+  /** Human vendor name shown in the chip, for example `GitHub`. */
   name: string;
   description?: string;
 };
@@ -47,24 +60,41 @@ function matches(query: string, ...fields: (string | undefined)[]): boolean {
 }
 
 /**
- * `@` selects the agent that answers this message.
+ * `@` selects either the agent that answers or a connected account it should use.
  *
  * `reopenOnChipClick` keeps an inserted mention editable without deleting and retyping.
  */
-export function agentTrigger(agents: readonly AgentOption[]): TriggerConfig {
+export function mentionTriggerConfig(
+  agents: readonly AgentOption[],
+  connections: readonly ConnectionOption[],
+): TriggerConfig {
   return mentionTrigger({
     char: AGENT_TRIGGER,
-    accessibilityLabel: "agent",
+    accessibilityLabel: "agent or connected account",
     reopenOnChipClick: true,
-    emptyMessage: "No agents in this channel",
-    onSearch: (query): TriggerSuggestion[] =>
-      agents
+    emptyMessage: "No matching agents or connected accounts",
+    onSearch: (query): TriggerSuggestion[] => [
+      ...agents
         .filter((agent) => matches(query, agent.name, agent.description))
         .map((agent) => ({
-          value: agent.id,
+          value: mentionValue("agent", agent.id),
           label: agent.name,
-          description: agent.description,
+          description: agent.description
+            ? `Agent · ${agent.description}`
+            : "Agent",
         })),
+      ...connections
+        .filter((connection) =>
+          matches(query, connection.name, connection.description),
+        )
+        .map((connection) => ({
+          value: mentionValue("connection", connection.id),
+          label: connection.name,
+          description: connection.description
+            ? `Connected account · ${connection.description}`
+            : "Connected account",
+        })),
+    ],
     onSelect: (suggestion) => suggestion.label,
   });
 }
@@ -96,10 +126,15 @@ export function slashCommandTrigger(
 
 export function buildTriggers({
   agents,
+  connections,
   commands,
 }: {
   agents: readonly AgentOption[];
+  connections: readonly ConnectionOption[];
   commands: readonly CommandOption[];
 }): TriggerConfig[] {
-  return [agentTrigger(agents), slashCommandTrigger(commands)];
+  return [
+    mentionTriggerConfig(agents, connections),
+    slashCommandTrigger(commands),
+  ];
 }

@@ -1,9 +1,4 @@
-import {
-  IconBrandGoogleDrive,
-  IconBrandNotion,
-  IconChevronRight,
-  IconPlug,
-} from "@tabler/icons-react";
+import { IconChevronRight } from "@tabler/icons-react";
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import * as React from "react";
@@ -13,7 +8,7 @@ import {
   PageSection,
   PageShell,
 } from "@/components/layout/page-shell";
-import { RowMark } from "@/components/layout/row-mark";
+import { PluginMark } from "@/components/plugin-mark";
 import {
   Item,
   ItemActions,
@@ -50,14 +45,6 @@ export const Route = createFileRoute("/_authed/settings/connected-accounts/")({
     typeof search.connected === "string" ? { connected: search.connected } : {},
 });
 
-/** The same marks the admin connector list uses: these are the same vendors seen from your side. */
-const MARKS: Record<string, React.ComponentType<{ className?: string }>> = {
-  "google-drive": IconBrandGoogleDrive,
-  notion: IconBrandNotion,
-};
-
-const markFor = (key: string) => MARKS[key] ?? IconPlug;
-
 function RouteComponent() {
   const { connected: outcome } = Route.useSearch();
   const plugins = useQuery(pluginsPageQueryOptions());
@@ -76,7 +63,9 @@ function RouteComponent() {
    * be connected at all, because there is no OAuth client to consent against.
    */
   const yours = (plugins.data?.catalogue ?? []).filter(
-    (entry) => entry.auth === "user-oauth" && added.has(entry.key),
+    (entry) =>
+      (entry.auth === "user-oauth" || entry.auth === "managed-user") &&
+      added.has(entry.key),
   );
 
   return (
@@ -111,7 +100,6 @@ function RouteComponent() {
           ) : (
             <PageRows>
               {yours.map((entry, index) => {
-                const Mark = markFor(entry.key);
                 return (
                   <React.Fragment key={entry.key}>
                     {/* A real link with no children: children passed to `render` replace the row's own. */}
@@ -125,9 +113,10 @@ function RouteComponent() {
                       }
                       size="sm"
                     >
-                      <RowMark>
-                        <Mark className="size-4" />
-                      </RowMark>
+                      <PluginMark
+                        logoUrl={entry.logoUrl}
+                        pluginKey={entry.key}
+                      />
                       <ItemContent>
                         <ItemTitle>{entry.title}</ItemTitle>
                         <ItemDescription>{entry.summary}</ItemDescription>

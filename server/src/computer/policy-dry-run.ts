@@ -115,7 +115,7 @@ export function contextFromAuditPayload(
     },
     file: file ? describeFile(file) : { path: "", name: "", extension: "" },
     command: text(payload.command),
-    mcp: { server: "", tool: "", effect: "" },
+    mcp: { server: "", tool: "", effect: "", operation: "" },
   };
 }
 

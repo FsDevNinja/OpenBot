@@ -11,6 +11,8 @@ export type PluginTool = {
   ref: string;
   /** Whether it changes something. Anything not positively known to be a read is a write. */
   effect: "read" | "write";
+  /** Permission-review group. Deletes remain writes for call-time policy. */
+  operation: "read" | "write" | "delete";
   grantedTo: string[];
 };
 
@@ -38,6 +40,8 @@ export type PluginServer = {
   docsUrl: string;
   /** `first-party` for a reviewed entry, `custom` for one an administrator added by URL. */
   provenance: string;
+  /** Whose credential a call uses; shared credentials remain administrator-governed. */
+  auth: CatalogueItem["auth"];
   hasCredential: boolean;
   toolsRefreshedAt: string | null;
   lastError: string | null;
@@ -88,13 +92,27 @@ export type CatalogueItem = {
    * account and there is no token to type here. `builtin` is a first-party capability that runs
    * inside this deployment — there is nothing to connect and nothing to type.
    */
-  auth: "none" | "deployment-bearer" | "user-oauth" | "builtin";
+  auth:
+    | "none"
+    | "deployment-bearer"
+    | "user-oauth"
+    | "managed-user"
+    | "builtin";
+  /** The service that owns OAuth applications and user tokens, or null for a direct connector. */
+  managedBy: "composio" | null;
   /** True for a vendor that gives every customer their own hostname. */
   perInstance: boolean;
+  /** Whether this choice ships with OpenBot or was returned by the live Composio catalogue. */
+  source: "openbot" | "composio";
+  logoUrl: string | null;
+  categories: string[];
+  toolsCount: number | null;
 };
 
 export type PluginsPage = {
   catalogue: CatalogueItem[];
+  /** A live catalogue failure does not hide already-enabled connectors or OpenBot built-ins. */
+  catalogueError: string | null;
   servers: PluginServer[];
   skills: PluginSkill[];
   /**
@@ -106,6 +124,8 @@ export type PluginsPage = {
    * grant, the boundary or the audit trail, which is not something a grant switch can show.
    */
   botsMayCallBack: boolean;
+  /** Whether this deployment can start and execute managed connection flows. */
+  managedAuthConfigured: boolean;
   /**
    * The redirect URI to register with a `user-oauth` vendor, exactly as this deployment will send it.
    *
@@ -132,6 +152,9 @@ export type GrantedPlugins = {
   }[];
 };
 
+/** A connector-sized capability a person can understand; exact tool refs stay internal. */
+export type ConnectorCapabilityLevel = "none" | "read" | "write" | "delete";
+
 export const pluginKeys = {
   all: ["plugins"] as const,
   page: () => ["plugins", "page"] as const,
@@ -142,6 +165,11 @@ export const pluginKeys = {
 /** One account this person has connected, from their own point of view. */
 export type PluginConnection = {
   serverId: string;
+  /** Display metadata for the enabled connector, not account profile data. */
+  title: string;
+  vendor: string;
+  /** Opaque id owned by the managed connector service; never an access or refresh token. */
+  connectionId: string;
   /** What the vendor actually granted, which is not always what was asked for. */
   scope: string;
   connectedAt: string;

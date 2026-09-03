@@ -105,6 +105,11 @@ export const mcpTools = pgTable(
     description: text("description").notNull().default(""),
     /** The tool's own JSON Schema, passed to the model unchanged. */
     inputSchema: jsonb("input_schema").notNull().default({}),
+    /**
+     * Permission-review grouping advertised by the connector. `delete` remains a write to policy;
+     * this column exists so an administrator can bulk-grant reads without destructive operations.
+     */
+    operation: text("operation").notNull().default("write"),
     createdAt: createdAt(),
   },
   (table) => [primaryKey({ columns: [table.serverId, table.name] })],

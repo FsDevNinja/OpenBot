@@ -3,7 +3,8 @@ import { Hono } from "hono";
 import type { BotAccessCheck } from "../agents/profile-policy";
 import type { AppVariables } from "../auth/guards";
 import { requireAdmin } from "../auth/guards";
-import { CATALOGUE, catalogueEntry } from "./catalogue";
+import { catalogueEntry } from "./catalogue";
+import { ManagedConnectorError } from "./managed-connector";
 import {
   authorizationUrlFor,
   challengeFor,
@@ -37,13 +38,13 @@ import {
 export type ConnectingPersonCheck = (userId: string) => Promise<boolean>;
 
 /**
- * The Plugins surface: what this deployment has added, and which Bots may use it.
+ * The Plugins surface: what this deployment has added and the runtime boundary around its use.
  *
- * What a Bot can reach is an administrator's; what it is told is not. Adding an MCP server stores a
- * credential and opens a path into another company's system, and enabling one on a Bot is the same
- * decision one step later, so both are an administrator's. A skill only ever asks for tools the Bot
- * already holds, and every one of those calls is still decided, policy-checked and audited, so
- * anybody may write one for themselves and put it on a Bot they own.
+ * An administrator decides which connector catalogues the workspace offers and draws hard policy
+ * boundaries. A coworker owner chooses a capability level for an owner-configurable connector on
+ * their own coworker; the server expands it into exact grants. Shared deployment credentials remain
+ * administrator-only. A skill only ever asks for tools the Bot already holds, and every call is
+ * still decided, policy-checked and audited.
  *
  * Reading is open to any signed-in person either way: what a Bot can reach is not a secret from the
  * person talking to it.
@@ -136,14 +137,25 @@ export function createPluginRoutes(
   }
 
   /** Everything the Plugins page draws: the catalogue, what is added, and the skills. */
-  routes.get("/", requireUser, async (context) =>
-    context.json({
-      catalogue: CATALOGUE.map((entry) => ({
+  routes.get("/", requireUser, async (context) => {
+    const [catalogue, servers, skills] = await Promise.all([
+      store.listCatalogue(),
+      store.listServers(),
+      store.listSkills(skillActor(context)),
+    ]);
+    return context.json({
+      catalogue: catalogue.entries.map((entry) => ({
         key: entry.key,
         title: entry.title,
         vendor: entry.vendor,
         summary: entry.summary,
         docsUrl: entry.docsUrl,
+        source:
+          entry.source ??
+          (entry.auth.kind === "managed-user" ? "composio" : "openbot"),
+        logoUrl: entry.logoUrl ?? null,
+        categories: entry.categories ?? [],
+        toolsCount: entry.toolsCount ?? null,
         /*
          * The kind, not the whole thing. The page needs to know what to ask an administrator for;
          * it has no use for the vendor's OAuth addresses, and a URL this deployment sends an
@@ -151,8 +163,11 @@ export function createPluginRoutes(
          * Plugins page.
          */
         auth: entry.auth.kind,
+        managedBy:
+          entry.auth.kind === "managed-user" ? entry.auth.provider : null,
         perInstance: entry.host === null,
       })),
+      catalogueError: catalogue.error,
       /*
        * Whether a Bot with no credential of its own can still call a tool back.
        *
@@ -162,9 +177,10 @@ export function createPluginRoutes(
        * every call was refused before it reached the boundary.
        */
       botsMayCallBack: connect?.botsMayCallBack === true,
-      servers: await store.listServers(),
+      managedAuthConfigured: store.managedConnectorConfigured(),
+      servers,
       // Scoped: the deployment's skills plus this person's own. An administrator sees them all.
-      skills: await store.listSkills(skillActor(context)),
+      skills,
       /*
        * What an administrator has to register with the vendor, character for character.
        *
@@ -177,8 +193,8 @@ export function createPluginRoutes(
       redirectUri: connect?.publicUrl
         ? redirectUriFor(connect.publicUrl)
         : null,
-    }),
-  );
+    });
+  });
 
   /** Add a curated server. The URL comes from the catalogue, never from the request. */
   routes.post("/servers", requireUser, async (context) => {
@@ -360,6 +376,53 @@ export function createPluginRoutes(
    */
   routes.post("/servers/:id/connect", requireUser, async (context) => {
     const serverId = context.req.param("id");
+    const entry = catalogueEntry(serverId);
+    const returnTo =
+      context.req.query("returnTo") === "admin" ? "admin" : "settings";
+
+    if (entry?.auth.kind === "managed-user") {
+      if (!connect?.appUrl) {
+        return context.json(
+          {
+            error:
+              "This deployment has no app URL configured, so the managed consent flow has nowhere to return. Set OPENBOT_APP_URL.",
+          },
+          503,
+        );
+      }
+      try {
+        const request = await store.beginManagedConnection({
+          serverId,
+          userId: context.var.actor.id,
+          callbackUrl: connectedAccountsUrlFor(
+            connect.appUrl,
+            { serverId },
+            returnTo,
+          ),
+        });
+        return context.json({
+          authorizationUrl: request.authorizationUrl,
+          connectionId: request.connectionId,
+        });
+      } catch (error) {
+        if (error instanceof CatalogueEntryUnknownError) {
+          return context.json(
+            {
+              error: `${entry.title} has not been enabled for this deployment yet. An administrator has to enable it first.`,
+            },
+            409,
+          );
+        }
+        if (
+          error instanceof ManagedConnectorError ||
+          error instanceof CustomServerRefusedError
+        ) {
+          return context.json({ error: error.message }, 503);
+        }
+        throw error;
+      }
+    }
+
     if (!connect?.publicUrl) {
       return context.json(
         {
@@ -370,7 +433,6 @@ export function createPluginRoutes(
       );
     }
 
-    const entry = catalogueEntry(serverId);
     if (entry?.auth.kind !== "user-oauth") {
       return context.json(
         { error: `${serverId} is not connected as an individual person.` },
@@ -435,9 +497,6 @@ export function createPluginRoutes(
      * than something carried into a sealed state. See {@link ConnectOrigin}: a destination that could
      * name another origin is an open redirect with a consent screen in front of it.
      */
-    const returnTo =
-      context.req.query("returnTo") === "admin" ? "admin" : "settings";
-
     const verifier = createVerifier();
     return context.json({
       authorizationUrl: authorizationUrlFor({
@@ -452,6 +511,32 @@ export function createPluginRoutes(
       }),
     });
   });
+
+  /** Revoke one private managed connection, after proving it belongs to the signed-in person. */
+  routes.delete(
+    "/servers/:id/connections/:connectionId",
+    requireUser,
+    async (context) => {
+      try {
+        await store.disconnectManagedConnection({
+          serverId: context.req.param("id"),
+          connectionId: context.req.param("connectionId"),
+          userId: context.var.actor.id,
+          by: actorEmail(context),
+        });
+        return context.json({ ok: true });
+      } catch (error) {
+        if (
+          error instanceof ManagedConnectorError ||
+          error instanceof CustomServerRefusedError ||
+          error instanceof CatalogueEntryUnknownError
+        ) {
+          return context.json({ error: error.message }, 400);
+        }
+        throw error;
+      }
+    },
+  );
 
   /**
    * Where the vendor sends somebody back.
@@ -643,10 +728,10 @@ export function createPluginRoutes(
   /**
    * May this person put this on that Bot?
    *
-   * MCP is an administrator's, always: it reaches another company's system with a stored credential.
-   * A skill is an instruction, so somebody may put their own skill on a Bot they own, and neither
-   * half alone is enough. Both are checked here rather than in the store, because this is the only
-   * place that knows who is asking.
+   * The legacy exact-MCP endpoint remains administrator-only. Coworker owners use the capability
+   * endpoint below, which is constrained to owner-configurable connectors. A skill is an instruction,
+   * so somebody may put their own skill on a Bot they own, and neither half alone is enough. These
+   * checks stay here because this is the only layer that knows who is asking.
    */
   async function enablementRefusal(
     context: { var: AppVariables },
@@ -763,6 +848,178 @@ export function createPluginRoutes(
 
     await store.grant(kind, body.ref, body.agentId, actorEmail(context));
     return context.json({ ok: true });
+  });
+
+  /**
+   * Choose one understandable connector capability on the Bot that will use it.
+   *
+   * Workspace administrators decide which connectors exist and draw the policy boundary. A Bot
+   * owner may then choose how much of a per-person connector their own Bot needs. Exact tool refs
+   * remain the persisted enforcement contract, but they are an implementation detail of this one
+   * capability decision rather than 893 switches a person is expected to understand.
+   */
+  routes.put("/grants/capability", requireUser, async (context) => {
+    const body = (await context.req.json().catch(() => null)) as {
+      agentId?: unknown;
+      serverId?: unknown;
+      level?: unknown;
+    } | null;
+    const levels = new Set(["none", "read", "write", "delete"] as const);
+    if (
+      typeof body?.agentId !== "string" ||
+      !body.agentId.trim() ||
+      typeof body.serverId !== "string" ||
+      !body.serverId.trim() ||
+      typeof body.level !== "string" ||
+      !levels.has(body.level as "none" | "read" | "write" | "delete")
+    ) {
+      return context.json(
+        { error: "A Bot, connector and capability level are required." },
+        400,
+      );
+    }
+
+    const agentId = body.agentId.trim();
+    const serverId = body.serverId.trim();
+    const level = body.level as "none" | "read" | "write" | "delete";
+    const actor = skillActor(context);
+    const owner = await store.agentOwner(agentId);
+
+    if (!actor.isAdmin && owner !== actor.id) {
+      // One answer for somebody else's private Bot and a Bot that does not exist: this route must
+      // not turn capability editing into a roster oracle.
+      return context.json(
+        { error: "You can only choose capabilities for Bots you own." },
+        403,
+      );
+    }
+    if (actor.isAdmin && owner === undefined) {
+      return context.json({ error: "There is no such Bot." }, 404);
+    }
+
+    const entry = catalogueEntry(serverId);
+    const ownerConfigurable =
+      entry?.auth.kind === "managed-user" ||
+      entry?.auth.kind === "user-oauth" ||
+      entry?.auth.kind === "builtin";
+    if (!actor.isAdmin && !ownerConfigurable) {
+      return context.json(
+        {
+          error:
+            "That connector uses a shared deployment credential. Only an administrator may attach it to a Bot.",
+        },
+        403,
+      );
+    }
+
+    const server = (await store.listServers()).find(
+      (candidate) => candidate.id === serverId,
+    );
+    if (!server) {
+      return context.json(
+        { error: "This workspace has not enabled that connector." },
+        404,
+      );
+    }
+
+    const refs = server.tools
+      .filter((tool) => {
+        if (level === "none") return false;
+        if (level === "read") return tool.operation === "read";
+        if (level === "write") return tool.operation !== "delete";
+        return true;
+      })
+      .map((tool) => tool.ref);
+
+    if (level !== "none" && refs.length === 0) {
+      return context.json(
+        {
+          error:
+            "This connector does not offer tools at that capability level.",
+        },
+        400,
+      );
+    }
+
+    await store.setMcpCapability({
+      agentId,
+      serverId,
+      refs,
+      level,
+      by: actorEmail(context),
+    });
+    return context.json({ ok: true, level, tools: refs.length });
+  });
+
+  /**
+   * One admin decision over many MCP grants, without one browser round trip per tool.
+   *
+   * Refusals are checked for the whole set before the first write. The store's ordinary `grant`
+   * method remains the write so every tool/Bot pair keeps its own audit entry and the call-time
+   * authorization contract does not gain a second implementation.
+   */
+  routes.post("/grants/bulk", requireUser, async (context) => {
+    const forbidden = requireAdmin(context);
+    if (forbidden) return forbidden;
+
+    const body = (await context.req.json().catch(() => null)) as {
+      kind?: unknown;
+      refs?: unknown;
+      agentIds?: unknown;
+    } | null;
+    if (
+      body?.kind !== "mcp" ||
+      !Array.isArray(body.refs) ||
+      !body.refs.every((ref) => typeof ref === "string" && ref.length > 0) ||
+      !Array.isArray(body.agentIds) ||
+      !body.agentIds.every(
+        (agentId) => typeof agentId === "string" && agentId.length > 0,
+      )
+    ) {
+      return context.json(
+        { error: "MCP refs and Bots are required for a bulk grant." },
+        400,
+      );
+    }
+
+    const refs = [...new Set(body.refs as string[])];
+    const agentIds = [...new Set(body.agentIds as string[])];
+    const total = refs.length * agentIds.length;
+    if (total === 0 || total > 10_000) {
+      return context.json(
+        { error: "A bulk grant must contain between 1 and 10,000 grants." },
+        400,
+      );
+    }
+
+    for (const agentId of agentIds) {
+      for (const ref of refs) {
+        const refusal = await enablementRefusal(
+          context,
+          "mcp",
+          ref,
+          agentId,
+          "grant",
+        );
+        if (refusal) return context.json({ error: refusal }, 403);
+      }
+    }
+
+    /* Bounded concurrency: fast enough for 893 GitHub tools without flooding the database pool. */
+    const grants = agentIds.flatMap((agentId) =>
+      refs.map((ref) => ({ agentId, ref })),
+    );
+    for (let index = 0; index < grants.length; index += 25) {
+      await Promise.all(
+        grants
+          .slice(index, index + 25)
+          .map(({ agentId, ref }) =>
+            store.grant("mcp", ref, agentId, actorEmail(context)),
+          ),
+      );
+    }
+
+    return context.json({ ok: true, granted: total });
   });
 
   routes.delete("/grants", requireUser, async (context) => {

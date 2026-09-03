@@ -24,6 +24,8 @@
     "test:smoke": "OPENBOT_SMOKE=1 bun test tests/smoke",
     "test:live-screen": "OPENBOT_LIVE_SCREEN=1 bun test agent-computer/tests/live-screen.test.ts agent-computer/tests/browser-close-announcement.test.ts",
     "diagram": "bun scripts/architecture-diagram.ts",
+    "composio:provision": "bun --no-env-file scripts/provision-composio-project.ts",
+    "composio:usage": "bun --no-env-file scripts/composio-project-usage.ts",
     "mock:knowledge": "bun scripts/mock-knowledge-mcp.ts"
   },
   "devDependencies": {

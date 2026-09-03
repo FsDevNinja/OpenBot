@@ -48,6 +48,34 @@ const store = createPluginStore({
   },
   encryptionKey: "x".repeat(44),
   policy: () => ({ mode: "enforce", deny: [], allow: ["true"] }),
+  managedConnector: {
+    provider: "composio",
+    listToolkits: async () => [
+      {
+        slug: "googledrive",
+        name: "Google Drive",
+        description: "Files in the Drive of whoever is asking.",
+        logoUrl: null,
+        categories: [],
+        toolsCount: 0,
+      },
+      {
+        slug: "notion",
+        name: "Notion",
+        description: "Pages and databases of whoever is asking.",
+        logoUrl: null,
+        categories: [],
+        toolsCount: 0,
+      },
+    ],
+    beginConnection: async () => {
+      throw new Error("not used here");
+    },
+    connectionsFor: async () => [],
+    disconnect: async () => {},
+    listTools: async () => [],
+    callTool: async () => ({ text: "", isError: false, truncated: false }),
+  },
 });
 
 /** The catalogue key under test. Real, because which credential it takes is a property of the entry. */
@@ -171,7 +199,7 @@ describe("a curated server may only be pointed at its own kind of credential", (
     expect(await refused).toBeInstanceOf(CustomServerRefusedError);
   });
 
-  test("adding it again leaves the registered OAuth client where it was", async () => {
+  test("adding it again detaches a leftover local OAuth client", async () => {
     /*
      * `registerOAuthClient` keeps the client it minted in this column, and adding the server again
      * to change an instance host says nothing about that client. Clearing it orphaned a credential
@@ -191,7 +219,7 @@ describe("a curated server may only be pointed at its own kind of credential", (
       .select({ credentialId: mcpServers.credentialId })
       .from(mcpServers)
       .where(eq(mcpServers.id, serverId));
-    expect(row?.credentialId).toBe(oauthClientCredentialId);
+    expect(row?.credentialId).toBeNull();
 
     // Put it back, so the case below reads the column this suite left rather than this one.
     await database

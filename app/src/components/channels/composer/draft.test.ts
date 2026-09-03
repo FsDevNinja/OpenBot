@@ -4,6 +4,7 @@ import {
   applyCommandChips,
   type CommandOption,
   enforceSingleAgent,
+  mentionValue,
   toDraft,
 } from "./draft";
 
@@ -13,6 +14,14 @@ function agent(id: string, name: string) {
 
 function command(id: string, name: string) {
   return chip({ trigger: "/", value: id, displayText: name });
+}
+
+function connection(id: string, name: string) {
+  return chip({
+    trigger: "@",
+    value: mentionValue("connection", id),
+    displayText: name,
+  });
 }
 
 describe("toDraft", () => {
@@ -29,6 +38,20 @@ describe("toDraft", () => {
 
   test("reports no agent when the message does not address one", () => {
     expect(toDraft([text("hello")]).agentId).toBeNull();
+  });
+
+  test("collects connected accounts without treating them as agents", () => {
+    const draft = toDraft([
+      connection("composio-github", "GitHub"),
+      text(" compare with "),
+      connection("composio-notion", "Notion"),
+      text(" and check "),
+      connection("composio-github", "GitHub"),
+    ]);
+
+    expect(draft.text).toBe("@GitHub compare with @Notion and check @GitHub");
+    expect(draft.agentId).toBeNull();
+    expect(draft.connectionIds).toEqual(["composio-github", "composio-notion"]);
   });
 
   test("collects command chips in the order they were typed", () => {
@@ -65,6 +88,23 @@ describe("enforceSingleAgent", () => {
   test("returns the same array when there is nothing to collapse", () => {
     const segments: Segment[] = [agent("knowledge", "Knowledge"), text(" hi")];
     expect(enforceSingleAgent(segments)).toBe(segments);
+  });
+
+  test("keeps multiple connections while collapsing only coworker mentions", () => {
+    const segments: Segment[] = [
+      agent("knowledge", "Knowledge"),
+      text(" use "),
+      connection("composio-github", "GitHub"),
+      text(" and ask "),
+      agent("computer", "Computer"),
+      text(" with "),
+      connection("composio-notion", "Notion"),
+    ];
+
+    const draft = toDraft(enforceSingleAgent(segments));
+
+    expect(draft.agentId).toBe("computer");
+    expect(draft.connectionIds).toEqual(["composio-github", "composio-notion"]);
   });
 });
 

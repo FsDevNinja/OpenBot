@@ -258,14 +258,19 @@ nobody, which is the row worth finding later.
 
 ## MCP and skills
 
-MCP servers and skills share the plugin grant table, but they have different ownership rules.
+MCP servers and skills share the plugin grant table, but the product presents their ownership at
+the level where the decision belongs.
 
-- MCP tools are admin-governed because they can reach external systems with stored credentials.
+- Administrators decide which connector catalogues the workspace enables and draw the hard action
+  boundaries. A coworker owner chooses that coworker's connector capability level — none, read,
+  read and write, or full access — on the coworker itself. The server expands the level into exact
+  tool grants in one transaction. Connectors using a shared deployment credential remain
+  administrator-only; per-person and builtin connectors may be configured by the coworker's owner.
 - Skills are reusable instructions. A person can create personal skills and attach them only to Bots they own. Administrators create deployment skills.
 
-The curated MCP catalogue contains Google Drive and Notion. Custom MCP servers must pass URL checks; unknown tools and custom-server tools are treated as writes unless positively classified as reads.
+The admin catalogue is read live from the deployment's Composio project and filtered to toolkits whose OAuth application Composio manages. OpenBot-native capabilities such as Routines remain compiled entries. An administrator selects which catalogue entries the workspace enables, and the server revalidates that key against the current Composio response before storing it. A catalogue failure is shown as a failure; OpenBot does not invent a development list. Already-enabled rows remain visible because they are deployment state, not fallback catalogue data. Custom MCP servers still take the separate URL-validation path.
 
-A catalogue entry says whose credential a Bot reaches it with, which is a different question from whether it is reachable at all. A deployment-wide token answers the same for everybody; Google Drive and Notion are both `user-oauth`, so a Bot reaches them as the person asking and sees only what that person can see. An administrator enabling the connector and a person connecting their own account are two decisions, and neither can be made for the other. See [Google Drive](plugins/google-drive.md) and [Notion](plugins/notion.md).
+A catalogue entry says whose connection a Bot reaches it with, which is a different question from whether it is reachable at all. A deployment-wide token answers the same for everybody; Composio entries are `managed-user`, so a Bot reaches them as the person asking and sees only what that person can see. Composio provisions OAuth applications and owns token exchange, storage, refresh, and revocation. OpenBot owns workspace enablement, coworker capability levels, exact internal grants, action policy, and the audit trail. Every managed tool is conservatively classified as a write for enforcement because that remote catalogue can change independently of an OpenBot release. Its provider safety hint is also retained as `mcp.operation`, so an administrator can write a stricter boundary around destructive operations without weakening that fail-closed effect. Each hosted customer deployment has its own Composio project key, and the deployment namespace is part of the opaque user id sent to Composio. An administrator enabling a connector, a coworker owner selecting a capability, and a person connecting their own account are three separate decisions. See [Composio SaaS boundary](composio-saas.md), [Google Drive](plugins/google-drive.md), and [Notion](plugins/notion.md).
 
 Every MCP call checks the grant first, then evaluates the same action policy engine with MCP context, then audits the result.
 
